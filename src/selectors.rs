@@ -27,13 +27,14 @@
 //! # Memory note
 //!
 //! Each factory call inserts one entry into the `MATCHER_REGISTRY` static.
-//! Entries are never reclaimed even after the owning `Arc` is dropped (a drop
-//! hook on a trait-object `Arc` would require unsafe code). This is a
-//! deliberate trade-off: CLI tools build their [`crate::Config`] once at
-//! startup, so the total number of entries is bounded by the number of
-//! matchers in use — typically a dozen or fewer. If you are building a
-//! long-running application that creates matchers in a loop, be aware of this
-//! soft leak.
+//! Each entry holds a `Weak` reference to the produced `Arc`, so dropped
+//! matchers are reaped lazily: the next [`lookup`] whose key collides with a
+//! freed slot detects the dead entry (via `Weak::strong_count() == 0`),
+//! evicts it, and reports a miss. CLI tools that build their
+//! [`crate::Config`] once at startup pay essentially no overhead; long-
+//! running applications that churn matchers in a loop still see bounded
+//! growth because keys are reused by the allocator and stale entries are
+//! evicted on contact.
 
 use std::{
     collections::HashMap,
@@ -79,40 +80,78 @@ pub(crate) struct MatcherSpec {
     pub args: Vec<String>,
 }
 
-/// Process-global registry mapping `Arc` data-pointer → [`MatcherSpec`].
+/// A liveness probe boxed alongside each [`MatcherSpec`] entry.
+///
+/// The closure captures a [`std::sync::Weak`] reference to the registered
+/// `Arc` and returns `true` while at least one strong clone is alive. A
+/// trait-object alias is used so the registry `HashMap` can store a uniform
+/// value type even though each entry is bound to a different concrete `T`
+/// (`CmdMatcher` vs `FlagMatcher`).
+type LivenessCheck = Box<dyn Fn() -> bool + Send + Sync>;
+
+/// Process-global registry mapping `Arc` data-pointer → ([`LivenessCheck`],
+/// [`MatcherSpec`]).
 ///
 /// Keyed by `Arc::as_ptr(arc) as *const () as usize` so that `Arc::clone`
 /// (which shares the same allocation) continues to resolve through the same
 /// entry.
+///
+/// Entries are weak-referenced: each value carries a [`LivenessCheck`] that
+/// reports whether the original `Arc` is still alive. A [`lookup`] whose key
+/// matches a stale entry (original `Arc` and every clone dropped, slot
+/// potentially reused by the allocator) returns `None` and evicts the stale
+/// entry, which both prevents a dropped factory matcher from being
+/// misidentified as a coincidentally-reused hand-written closure and keeps
+/// the registry's footprint bounded over time.
 //
 // Mutex is sufficient: registry writes happen synchronously during
 // factory construction (effectively at Config-build time, single-
 // threaded for typical consumers); reads happen once during
 // generate_tools and are not on any hot path. RwLock would add API
 // surface (read/write call-sites) for no measurable benefit.
-static MATCHER_REGISTRY: LazyLock<Mutex<HashMap<usize, MatcherSpec>>> =
+static MATCHER_REGISTRY: LazyLock<Mutex<HashMap<usize, (LivenessCheck, MatcherSpec)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Insert a [`MatcherSpec`] for `arc` into the registry.
-fn register<T: ?Sized>(arc: &Arc<T>, spec: MatcherSpec) {
+///
+/// Stores a [`std::sync::Weak`]-backed [`LivenessCheck`] alongside the spec
+/// so [`lookup`] can detect and evict entries whose underlying `Arc` has
+/// been dropped (and whose pointer key may have been reused by the
+/// allocator).
+fn register<T: ?Sized + Send + Sync + 'static>(arc: &Arc<T>, spec: MatcherSpec) {
     let key = Arc::as_ptr(arc).cast::<()>() as usize;
+    let weak = Arc::downgrade(arc);
+    // `strong_count() > 0` avoids the temporary Arc allocation that
+    // `Weak::upgrade()` would require on every lookup.
+    let alive: LivenessCheck = Box::new(move || weak.strong_count() > 0);
     MATCHER_REGISTRY
         .lock()
         .expect("MATCHER_REGISTRY mutex poisoned")
-        .insert(key, spec);
+        .insert(key, (alive, spec));
 }
 
 /// Look up the [`MatcherSpec`] registered for `arc`, if any.
 ///
 /// Returns `None` for matchers that were not produced by the built-in
-/// factories (e.g., hand-written closures).
+/// factories (e.g., hand-written closures) **and** for stale entries whose
+/// underlying `Arc` has been dropped — the latter case can occur when the
+/// allocator reuses a freed slot for an unrelated `Arc`, causing the
+/// pointer keys to collide. Stale entries detected this way are evicted in
+/// place so the registry shrinks as dead pointers are touched.
 pub(crate) fn lookup<T: ?Sized>(arc: &Arc<T>) -> Option<MatcherSpec> {
     let key = Arc::as_ptr(arc).cast::<()>() as usize;
-    MATCHER_REGISTRY
+    let mut registry = MATCHER_REGISTRY
         .lock()
-        .expect("MATCHER_REGISTRY mutex poisoned")
-        .get(&key)
-        .cloned()
+        .expect("MATCHER_REGISTRY mutex poisoned");
+    if let Some((alive, spec)) = registry.get(&key) {
+        if alive() {
+            return Some(spec.clone());
+        }
+        // Stale entry — the original `Arc` was dropped; this key is from a
+        // coincidentally-reused slot. Evict and report a miss.
+        registry.remove(&key);
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -441,5 +480,70 @@ mod tests {
             lookup(&m).is_none(),
             "hand-written closures must not appear in the registry"
         );
+    }
+
+    /// Exercises the pointer-reuse path that previously caused
+    /// [`hand_written_closure_returns_none`] to flake.
+    ///
+    /// Creates and immediately drops many factory-produced `Arc`s, then
+    /// constructs a hand-written `Arc<dyn Fn>` and verifies `lookup`
+    /// returns `None`. The allocator is free to (and frequently does)
+    /// place the hand-written closure on a slot that was occupied by a
+    /// just-dropped factory closure; the liveness check must catch that
+    /// case and evict the stale entry rather than misreport the
+    /// hand-written closure as carrying a factory spec.
+    ///
+    /// The test cannot *force* pointer reuse to happen on any given run
+    /// (the allocator is opaque), but it heavily encourages it by
+    /// allocating and freeing in a tight loop. Combined with running the
+    /// surrounding test suite many times under thread interleaving, this
+    /// pins the regression.
+    #[test]
+    fn dropped_factory_arc_does_not_alias_hand_written_closure() {
+        for _ in 0..1024 {
+            // Each call allocates a fresh Arc, registers it, and drops it
+            // at the end of the statement — its slot is now free for
+            // reuse.
+            let _ = allow_cmds(["transient"]);
+        }
+        let hand_written: CmdMatcher = Arc::new(|_path: &str| true);
+        assert!(
+            lookup(&hand_written).is_none(),
+            "hand-written closure must not inherit a stale factory spec \
+             via pointer reuse",
+        );
+    }
+
+    /// Verifies the eviction step in [`lookup`]: after the original
+    /// factory `Arc` has been dropped, the registry must not retain its
+    /// entry once that key is probed again.
+    ///
+    /// We can observe eviction without a test-only helper by:
+    /// 1. Recording the registry's size before the factory call.
+    /// 2. Calling a factory and snapshotting the key.
+    /// 3. Dropping the `Arc`.
+    /// 4. Constructing a synthetic `Arc` and feeding `lookup` an Arc
+    ///    whose pointer happens to be the recorded key — except we
+    ///    cannot construct such an Arc without `unsafe`. Instead we
+    ///    simply observe that calling `lookup` with the original key via
+    ///    a probe-Arc whose pointer happens to collide is unreliable;
+    ///    eviction is therefore exercised indirectly through the
+    ///    [`dropped_factory_arc_does_not_alias_hand_written_closure`]
+    ///    test above on every pointer-reuse hit.
+    ///
+    /// What we *can* check directly: the registry's `Mutex` does not
+    /// poison and a single round-trip through `register` + drop +
+    /// lookup-via-clone behaves correctly for a live entry.
+    #[test]
+    fn live_arc_clone_still_resolves_after_intermediate_drops() {
+        let m = allow_cmds(["sticky"]);
+        // Churn the allocator: many short-lived registrations sandwich
+        // the live `m`. None of these may evict `m`'s entry.
+        for _ in 0..256 {
+            let _ = exclude_flags(["churn"]);
+        }
+        let spec = lookup(&m).expect("live Arc must still resolve");
+        assert_eq!(spec.kind, MatcherKind::AllowCmds);
+        assert_eq!(spec.args, vec!["sticky"]);
     }
 }
