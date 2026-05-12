@@ -58,7 +58,7 @@ use crate::selector::Selector;
 /// (`Config { .. }`) from outside this crate. New fields may be added in
 /// minor releases without bumping the major version; the builder methods are
 /// the stable surface.
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[non_exhaustive]
 pub struct Config {
     /// The subcommand name brontes registers on the user's CLI.

@@ -95,6 +95,20 @@ pub enum Error {
     /// `String` or `&'static str`, is preserved verbatim.
     #[error("panic: {0}")]
     Panic(String),
+
+    /// The MCP server failed during initialization (transport setup, protocol
+    /// negotiation, or cancellation before the first request).
+    ///
+    /// Boxed because `ServerInitializeError` is several hundred bytes — keeping
+    /// the variant body small keeps the overall [`Error`] enum compact for the
+    /// common (non-error) `Result<T, Error>` path.
+    #[error("mcp initialize error: {0}")]
+    McpInitialize(#[from] Box<rmcp::service::ServerInitializeError>),
+
+    /// An MCP protocol-level error occurred after the server was running
+    /// (transport closed unexpectedly, response wrong shape, cancellation, etc.).
+    #[error("mcp protocol error: {0}")]
+    Mcp(#[from] Box<rmcp::ServiceError>),
 }
 
 /// Result alias for fallible brontes operations.

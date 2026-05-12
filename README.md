@@ -4,19 +4,48 @@
 
 A Rust library for transforming `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers, inspired by [njayp/ophis](https://github.com/njayp/ophis).
 
-## Status
+## Quick start
 
-Early development. The library currently exposes the [`generate_tools`] entry
-point and its supporting types — a consumer can build the MCP tool list for
-their `clap::Command` tree right now without a running MCP server. The MCP
-server runtime itself (the `mcp` subcommand tree, stdio and HTTP transports,
-editor-config helpers for Claude / VSCode / Cursor) is not yet shipped.
+Two lines mount and dispatch the `mcp` subtree on any existing `clap` CLI:
 
-Public surface at this revision:
+```rust
+use clap::Command;
 
+#[tokio::main]
+async fn main() -> brontes::Result<()> {
+    let cli = Command::new("my-cli")
+        .version("0.1.0")
+        .subcommand(Command::new("greet").about("Say hi"))
+        .subcommand(brontes::command(None));                  // [1] mount
+
+    let matches = cli.clone().get_matches();
+    match matches.subcommand() {
+        Some(("mcp",   sub)) => brontes::handle(sub, &cli, None).await,  // [2] dispatch
+        Some(("greet", _))   => { println!("hi"); Ok(()) }
+        _ => Ok(()),
+    }
+}
+```
+
+For tiny CLIs whose only purpose is the MCP server, collapse the ceremony
+into one line with `brontes::run`:
+
+```rust
+use clap::Command;
+
+#[tokio::main]
+async fn main() -> brontes::Result<()> {
+    brontes::run(Command::new("my-cli").version("0.1.0"), None).await
+}
+```
+
+## Public surface
+
+- `brontes::command(cfg)` / `brontes::handle(matches, cli, cfg)` /
+  `brontes::run(cli, cfg)` — mount, dispatch, and one-shot runners for the
+  `mcp` subtree (`mcp start`, `mcp tools`, `mcp stream`).
 - `brontes::generate_tools(root, cfg) -> Result<Vec<rmcp::model::Tool>>` —
-  walks the command tree, applies safety filters and first-match-wins
-  selectors, builds per-tool JSON Schemas, returns rmcp-ready tools.
+  offline tool-list builder for consumers that wire their own server.
 - `brontes::Config` — fluent builder for tool-name prefix, selectors,
   default env, annotations, deprecated commands, per-flag schema overrides,
   log level, and MCP `Implementation` identity.

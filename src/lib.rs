@@ -1,43 +1,56 @@
 //! brontes: transform clap CLIs into MCP servers.
 //!
 //! brontes walks a [`clap::Command`] tree, exposes every reachable command as an
-//! [MCP](https://modelcontextprotocol.io) tool, and ships editor-config helpers
-//! for Claude Desktop, `VSCode`, and Cursor.
+//! [MCP](https://modelcontextprotocol.io) tool, and ships a complete MCP server
+//! runtime over stdio so the resulting agent surface plugs straight into Claude
+//! Desktop, Cursor, and `VSCode`.
 //!
-//! # Quick start
+//! # Two-line quick start
 //!
-//! ```rust
+//! ```no_run
 //! use clap::Command;
-//! use brontes::Config;
 //!
-//! let root = Command::new("myapp")
-//!     .subcommand(Command::new("deploy").about("Deploy the app"));
+//! #[tokio::main]
+//! async fn main() -> brontes::Result<()> {
+//!     let cli = Command::new("my-cli")
+//!         .version("0.1.0")
+//!         .subcommand(Command::new("greet").about("Say hi"))
+//!         .subcommand(brontes::command(None));            // [1] mount
 //!
-//! let tools = brontes::generate_tools(&root, &Config::default())
-//!     .expect("valid config");
-//! // `tools` is a Vec<rmcp::model::Tool> ready to register with a server.
+//!     let matches = cli.clone().get_matches();
+//!     match matches.subcommand() {
+//!         Some(("mcp", sub)) => brontes::handle(sub, &cli, None).await,  // [2] dispatch
+//!         Some(("greet", _)) => { println!("hi"); Ok(()) }
+//!         _ => Ok(()),
+//!     }
+//! }
 //! ```
 //!
-//! # Status
+//! For tiny CLIs whose only purpose is the MCP server, collapse the
+//! ceremony into one line with [`run`]:
 //!
-//! This release ships brontes' **library surface**: [`generate_tools`]
-//! and its supporting types ([`Config`], [`Selector`], the
-//! [`selectors`] factory functions, [`ToolAnnotations`], [`ToolInput`],
-//! [`ToolOutput`], [`SchemaType`], [`Error`], [`Result`], and the
-//! middleware plumbing — [`MiddlewareCtx`], [`Middleware`],
-//! [`BoxedNext`], [`MiddlewareResult`]). A consumer can build the MCP
-//! tool list for their `clap::Command` tree today without a running
-//! MCP server.
+//! ```no_run
+//! use clap::Command;
 //!
-//! Not yet shipped, planned for a later minor release:
+//! #[tokio::main]
+//! async fn main() -> brontes::Result<()> {
+//!     brontes::run(Command::new("my-cli").version("0.1.0"), None).await
+//! }
+//! ```
 //!
-//! - The MCP server runtime — `brontes::command()`, `brontes::handle()`,
-//!   and `brontes::run()` — that turns a generated tool list into a
-//!   live MCP server.
-//! - Editor manager subcommands for Claude Desktop, Cursor, and `VSCode`
-//!   config integration.
-//! - HTTP streamable transport (stdio support will land alongside the
-//!   server runtime).
+//! # Capabilities
+//!
+//! - [`generate_tools`] — walk a [`clap::Command`] tree into a
+//!   [`Vec<rmcp::model::Tool>`](rmcp::model::Tool) for offline inspection,
+//!   editor-config generation, or hand-rolled server wiring.
+//! - [`command`], [`handle`], [`run`] — mount the `mcp` subtree and serve
+//!   the generated tool list over stdio (HTTP streamable transport lands
+//!   in a follow-on release; the `mcp stream` clap surface is registered
+//!   today so editor-config writers can target it).
+//! - [`Config`] — selectors, annotations, per-flag schema overrides,
+//!   default environment variables, server identity overrides.
+//! - [`Selector`], [`Middleware`] — first-match-wins routing rules and
+//!   an async middleware boundary for wrapping tool execution.
 //!
 //! Bug reports and feature requests:
 //! <https://github.com/tj-smith47/brontes/issues>.
@@ -52,14 +65,17 @@ mod annotations;
 mod command;
 mod config;
 mod error;
+mod exec;
 mod schema;
 mod selector;
 pub mod selectors;
+mod server;
+mod subcommands;
 mod tool;
 mod walk;
 
 pub use annotations::ToolAnnotations;
-pub use command::generate_tools;
+pub use command::{command, generate_tools, handle, run};
 pub use config::Config;
 pub use error::{Error, Result};
 pub use schema::SchemaType;
@@ -67,3 +83,11 @@ pub use selector::{
     BoxedNext, CmdMatcher, FlagMatcher, Middleware, MiddlewareCtx, MiddlewareResult, Selector,
 };
 pub use tool::{ToolInput, ToolOutput};
+
+/// Internal-test access point: not a stable surface, do not use from
+/// downstream crates. Re-exported only so the integration-test crate can
+/// drive [`server::BrontesServer`] over an in-memory duplex transport.
+#[doc(hidden)]
+pub mod __test_internal {
+    pub use crate::server::BrontesServer;
+}

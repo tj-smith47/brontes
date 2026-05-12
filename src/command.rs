@@ -1,10 +1,8 @@
-//! [`generate_tools`]: build the MCP tool list for a clap command tree.
+//! Public command-tree API: [`generate_tools`] (offline tool-list build) plus
+//! the runtime entry points [`command`], [`handle`], and [`run`] that mount
+//! and dispatch the `mcp` subtree.
 //!
-//! Call [`generate_tools`] with the root [`clap::Command`] and a [`Config`]
-//! to produce the list of MCP tools ready to register with a server.  This
-//! is the primary entry point for brontes consumers.
-//!
-//! # Quick start
+//! # Quick start — tool-list only
 //!
 //! ```rust
 //! use clap::Command;
@@ -16,6 +14,27 @@
 //! let cfg = Config::default();
 //! let tools = brontes::generate_tools(&root, &cfg).expect("valid config");
 //! assert!(!tools.is_empty());
+//! ```
+//!
+//! # Quick start — full MCP server (two lines)
+//!
+//! ```no_run
+//! use clap::Command;
+//!
+//! #[tokio::main]
+//! async fn main() -> brontes::Result<()> {
+//!     let cli = Command::new("my-cli")
+//!         .version("0.1.0")
+//!         .subcommand(Command::new("greet").about("Say hi"))
+//!         .subcommand(brontes::command(None));          // [1] mount
+//!
+//!     let matches = cli.clone().get_matches();
+//!     match matches.subcommand() {
+//!         Some(("mcp", sub)) => brontes::handle(sub, &cli, None).await,  // [2] dispatch
+//!         Some(("greet", _)) => { println!("hi"); Ok(()) }
+//!         _ => Ok(()),
+//!     }
+//! }
 //! ```
 
 use std::collections::HashSet;
@@ -269,6 +288,171 @@ fn validate_flag_path(
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Public MCP-subtree API: command(), handle(), run().
+// ---------------------------------------------------------------------------
+
+/// Default name of the mcp subcommand group; mirrors ophis (`config.go:81`).
+const DEFAULT_COMMAND_NAME: &str = "mcp";
+
+/// Build the `mcp` subcommand subtree, ready to mount on a parent CLI.
+///
+/// `cfg` is the optional brontes configuration. `None` and
+/// `Some(&Config::default())` produce identical behavior. The returned
+/// [`Command`] has the configured group name ([`Config::command_name`],
+/// default `"mcp"`) and registers the `start`, `tools`, and `stream`
+/// children.
+///
+/// Returns a plain [`Command`] (not a `Result`) so the canonical two-line
+/// call site stays a single `.subcommand(brontes::command(None))` token.
+/// All validation — empty group name, sibling collision with a user-defined
+/// subcommand, missing `mcp` mount — is deferred to [`handle`], which sees
+/// the assembled parent CLI tree and surfaces a clean
+/// [`crate::Error::Config`] at dispatch time.
+///
+/// An empty `cfg.command_name` defaults back to `"mcp"`; an explicit empty
+/// string never reaches `clap::Command::new` from this constructor.
+///
+/// # Example
+///
+/// ```rust
+/// use clap::Command;
+///
+/// let cli = Command::new("my-cli")
+///     .version("0.1.0")
+///     .subcommand(brontes::command(None));
+/// assert!(cli.find_subcommand("mcp").is_some());
+/// ```
+#[must_use]
+pub fn command(cfg: Option<&Config>) -> Command {
+    let name = cfg
+        .and_then(|c| c.command_name.as_deref())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_COMMAND_NAME);
+    crate::subcommands::build(name)
+}
+
+/// Dispatch an `mcp` subcommand match.
+///
+/// `matches` is the [`ArgMatches`](clap::ArgMatches) for the `mcp` group
+/// (typically obtained via `matches.subcommand()` on the root match).
+/// `cli` is the full user CLI (cloned by the caller — clap's
+/// `get_matches(self)` consumes the original). `cfg` is the optional
+/// brontes configuration.
+///
+/// Validates that the configured group name is in fact the brontes-minted
+/// subtree (sibling collision detection) before invoking the matched leaf.
+///
+/// # Errors
+///
+/// - [`crate::Error::Config`] when the configured `command_name` resolves to
+///   a sibling subcommand that brontes did not mint (e.g., the user
+///   pre-registered a `mcp` subcommand with the same name and forgot to
+///   rename ours via [`Config::command_name`]).
+/// - Any error returned by the dispatched leaf (`start`, `tools`, or the
+///   `stream` Task-#3 stub).
+pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Config>) -> Result<()> {
+    let cfg_owned = cfg.map_or_else(Config::default, Config::clone);
+    // An explicit empty `command_name` would have silently re-used "mcp"
+    // inside `command()`. Surface it here as a clean config error so a
+    // typo in the consumer's config doesn't produce confusing diagnostics
+    // later.
+    if matches!(cfg.and_then(|c| c.command_name.as_deref()), Some("")) {
+        return Err(crate::Error::Config(
+            "Config.command_name must not be empty".into(),
+        ));
+    }
+    let group_name = cfg
+        .and_then(|c| c.command_name.as_deref())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_COMMAND_NAME);
+
+    // Sibling-collision check: the sibling in the user's CLI named
+    // `group_name` must carry our hidden marker. If it does not, the user
+    // already had a same-named subcommand and brontes silently lost the
+    // mount race — surface that as a clean error.
+    let group = cli.find_subcommand(group_name).ok_or_else(|| {
+        crate::Error::Config(format!(
+            "no subcommand named {group_name:?} found on the CLI; \
+             did you forget to mount brontes::command(...)?"
+        ))
+    })?;
+    let has_marker = group
+        .get_subcommands()
+        .any(|s| s.get_name() == crate::subcommands::MARKER_NAME);
+    if !has_marker {
+        return Err(crate::Error::Config(format!(
+            "subcommand {group_name:?} on the CLI was not minted by brontes \
+             (sibling collision); rename via Config::command_name"
+        )));
+    }
+
+    match matches.subcommand() {
+        Some(("start", sub)) => {
+            crate::subcommands::start::run(sub, cli.clone(), Some(cfg_owned)).await
+        }
+        Some(("tools", sub)) => crate::subcommands::tools::run(sub, cli, Some(cfg_owned)),
+        Some(("stream", sub)) => crate::subcommands::stream::run(sub, cli.clone(), Some(cfg_owned)),
+        Some((other, _)) => Err(crate::Error::Config(format!(
+            "unknown mcp subcommand: {other:?}"
+        ))),
+        None => Err(crate::Error::Config(
+            "no mcp subcommand selected; pass --help to see options".into(),
+        )),
+    }
+}
+
+/// One-call sugar: mount the `mcp` subtree, parse `argv`, dispatch.
+///
+/// Equivalent to writing the two-line ceremony from the crate-level
+/// example by hand. Returns an [`crate::Error::Config`] when invoked with a
+/// non-mcp subcommand or with no subcommand at all — `run()` is intended
+/// for tiny CLIs that have no business logic of their own beyond the
+/// MCP subtree.
+///
+/// # Errors
+///
+/// - [`crate::Error::Config`] from [`command`] for bad configuration.
+/// - [`crate::Error::Config`] if argv selects a non-mcp subcommand.
+/// - Any error returned by [`handle`].
+///
+/// # Example
+///
+/// ```no_run
+/// use clap::Command;
+///
+/// #[tokio::main]
+/// async fn main() -> brontes::Result<()> {
+///     brontes::run(Command::new("my-cli").version("0.1.0"), None).await
+/// }
+/// ```
+pub async fn run(cli: Command, cfg: Option<&Config>) -> Result<()> {
+    let mounted = cli.subcommand(command(cfg));
+    let cli_for_dispatch = mounted.clone();
+    let matches = mounted.get_matches();
+    match matches.subcommand() {
+        Some((name, sub)) => {
+            let group_name = cfg
+                .and_then(|c| c.command_name.as_deref())
+                .unwrap_or(DEFAULT_COMMAND_NAME);
+            if name == group_name {
+                handle(sub, &cli_for_dispatch, cfg).await
+            } else {
+                Err(crate::Error::Config(format!(
+                    "brontes::run only dispatches the {group_name:?} subtree; \
+                     got subcommand {name:?}. Mount brontes::command() on a \
+                     hand-built CLI for multi-subcommand apps."
+                )))
+            }
+        }
+        None => Err(crate::Error::Config(format!(
+            "no subcommand provided; expected the {:?} subtree",
+            cfg.and_then(|c| c.command_name.as_deref())
+                .unwrap_or(DEFAULT_COMMAND_NAME)
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------

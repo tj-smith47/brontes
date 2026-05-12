@@ -34,12 +34,27 @@ All notable changes to this project are documented here. Format adapted from [Ke
 - `brontes::Error` (non-exhaustive) and `brontes::Result` — library
   error plumbing. Brontes does not implement `Termination`; pair with
   `Result<(), brontes::Error>` in `main`.
+- `brontes::command(cfg)` — build the `mcp` subcommand subtree
+  (`mcp start`, `mcp tools`, `mcp stream`) ready to mount on a parent
+  `clap::Command`. Validates the configured group name and surfaces a
+  sibling-collision error from `handle` when the user's CLI already
+  carries a same-named subcommand.
+- `brontes::handle(matches, cli, cfg)` — dispatch an `mcp` subcommand
+  match. Async; routes `start`, `tools`, and `stream` to their
+  respective runtimes.
+- `brontes::run(cli, cfg)` — one-call sugar that mounts the subtree,
+  parses argv, and dispatches. Intended for tiny CLIs whose only
+  purpose is the MCP server.
+- `mcp start` — stdio MCP server runtime over `rmcp::transport::stdio`,
+  with `--log-level` flag, stderr-logging tracing subscriber, and
+  signal-driven graceful shutdown.
+- `mcp tools` — exports the generated tool list to `./mcp-tools.json`
+  as pretty-printed JSON.
+- `mcp stream` — clap surface for the streamable-HTTP MCP server;
+  body lands in a follow-on release alongside middleware execution.
 
 ### Notes
 
 - MSRV is 1.94.
-- This release ships the library surface only. The MCP server
-  runtime, editor manager subcommands, and HTTP streamable transport
-  are not yet shipped — track GitHub issues for the rollout.
 
 [Unreleased]: https://github.com/tj-smith47/brontes/compare/master...HEAD
