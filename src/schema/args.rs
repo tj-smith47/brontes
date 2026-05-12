@@ -33,6 +33,9 @@ pub(crate) fn args_description(cmd: &Command) -> String {
     // We extract everything after the command path and strip options
     // placeholders to get the positional pattern.
     let raw = {
+        // `render_usage` takes &mut self in clap 4.5; we clone to keep the
+        // caller's `&Command` borrow shape (so `generate_tools` can call us
+        // from inside an immutable walk).
         let cmd = &mut cmd.clone();
         cmd.render_usage().to_string()
     };
@@ -45,27 +48,63 @@ pub(crate) fn args_description(cmd: &Command) -> String {
     description
 }
 
+/// Strip ANSI escape sequences from a string.
+///
+/// Handles CSI sequences (ESC `[` ... terminating letter/symbol) to defend
+/// against a future clap version emitting styled output through
+/// `render_usage().to_string()`.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            // Skip until the terminating letter or symbol (@-~).
+            chars.next(); // consume '['
+            for inner in chars.by_ref() {
+                if inner.is_ascii_alphabetic() || matches!(inner, '~' | '@') {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Extract the positional pattern from a usage string.
 ///
 /// Given a usage string like `"Usage: my-cli sub [OPTIONS] <file>"`,
 /// returns `Some("<file>")`. Returns `None` if no positionals are found
 /// (only command path and/or options).
 fn extract_positional_pattern(raw: &str) -> Option<String> {
+    // 0. Strip ANSI escapes (defensive against future clap versions).
+    let clean = strip_ansi(raw);
+
     // 1. Strip leading "Usage: " or "Usage:"
-    let after_label = raw
+    let after_label = clean
         .trim_start()
         .strip_prefix("Usage: ")
-        .or_else(|| raw.trim_start().strip_prefix("Usage:"))
-        .unwrap_or(raw)
+        .or_else(|| clean.trim_start().strip_prefix("Usage:"))
+        .unwrap_or(&clean)
         .trim();
 
-    // 2. Strip known options placeholders ("[OPTIONS]", "[flags]").
-    //    Each may appear with surrounding whitespace.
+    // 2. Strip known placeholders ("[OPTIONS]", "[flags]", "[COMMAND]",
+    //    "<COMMAND>", "[SUBCOMMAND]", "<SUBCOMMAND>"). Each may appear with
+    //    surrounding whitespace.
     let no_options = after_label
         .replace(" [OPTIONS]", "")
         .replace(" [flags]", "")
         .replace("[OPTIONS]", "")
-        .replace("[flags]", "");
+        .replace("[flags]", "")
+        .replace(" [COMMAND]", "")
+        .replace("[COMMAND]", "")
+        .replace(" <COMMAND>", "")
+        .replace("<COMMAND>", "")
+        .replace(" [SUBCOMMAND]", "")
+        .replace("[SUBCOMMAND]", "")
+        .replace(" <SUBCOMMAND>", "")
+        .replace("<SUBCOMMAND>", "");
     let no_options = no_options.trim();
 
     // 3. Find the first `<` or `[` character: that's where positionals start.
@@ -249,5 +288,41 @@ mod tests {
     fn extract_positional_pattern_returns_none_for_empty_usage() {
         let pattern = extract_positional_pattern("");
         assert_eq!(pattern, None, "must handle empty input gracefully");
+    }
+
+    #[test]
+    fn parent_with_positionals_and_subcommand_strips_command_placeholder() {
+        // A parent command with its own required positional AND subcommands.
+        // clap will render: "Usage: my-cli <NAME> [COMMAND]".
+        // We want the Usage pattern to be `<NAME>`, NOT `<NAME> [COMMAND]`.
+        let mut parent = Command::new("my-cli")
+            .arg(Arg::new("name").required(true))
+            .subcommand(Command::new("sub"));
+        parent.build();
+        let leaf = parent.clone(); // The parent itself is the command under test
+        let desc = description_for(&leaf);
+        assert!(
+            desc.contains("Usage pattern: <name>"),
+            "expected `Usage pattern: <name>`, got: {desc}"
+        );
+        assert!(
+            !desc.contains("COMMAND"),
+            "subcommand placeholder must be stripped, got: {desc}"
+        );
+    }
+
+    #[test]
+    fn extract_positional_pattern_strips_ansi_escapes() {
+        // Defensive: if a future clap version emits ANSI escapes through
+        // render_usage().to_string(), the extracted pattern must not carry
+        // them through.
+        let with_ansi = "\u{1b}[1mUsage:\u{1b}[0m my-cli [OPTIONS] \u{1b}[33m<NAME>\u{1b}[0m";
+        let pattern = extract_positional_pattern(with_ansi);
+        let p = pattern.expect("should extract pattern");
+        assert!(
+            !p.contains('\u{1b}'),
+            "ANSI escape leaked into pattern: {p:?}"
+        );
+        assert!(p.contains("<NAME>"), "actual pattern content lost: {p:?}");
     }
 }
