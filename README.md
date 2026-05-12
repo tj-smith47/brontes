@@ -45,6 +45,25 @@ async fn main() -> brontes::Result<()> {
   `brontes::run(cli, cfg)` — mount, dispatch, and one-shot runners for the
   `mcp` subtree (`mcp start` for stdio, `mcp stream --host <H> --port <P>`
   for streamable HTTP, `mcp tools` to export the tool list).
+
+  `mcp stream` flags:
+
+  | Flag | Default | Notes |
+  |------|---------|-------|
+  | `--host <HOST>` | `0.0.0.0` (bind-all) | Bind address |
+  | `--port <PORT>` | `8080` | TCP port |
+  | `--log-level <LEVEL>` | `info` | trace / debug / info / warn / error |
+  | `--allow-host <HOST>` | *(none)* | Append to rmcp's DNS-rebind allow-list (repeatable) |
+
+  rmcp's DNS-rebind guard defaults to allowing only `localhost`, `127.0.0.1`,
+  and `::1`. Requests from any other `Host:` header get a silent 403. For LAN
+  or public exposure, add each reachable hostname:
+
+  ```bash
+  my-cli mcp stream --host 0.0.0.0 --port 8080 \
+      --allow-host myhost.local \
+      --allow-host 192.168.1.10
+  ```
 - `brontes::generate_tools(root, cfg) -> Result<Vec<rmcp::model::Tool>>` —
   offline tool-list builder for consumers that wire their own server.
 - `brontes::Config` — fluent builder for tool-name prefix, selectors,

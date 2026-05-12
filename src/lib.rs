@@ -87,6 +87,7 @@ pub use tool::{ToolInput, ToolOutput};
 /// downstream crates. Re-exported only so the integration-test crate can
 /// drive [`server::BrontesServer`] over an in-memory duplex transport
 /// or [`server::http::serve_http`] against an ephemeral local port.
+// Not a semver-stable surface. Downstream crates relying on this break without notice.
 #[doc(hidden)]
 pub mod __test_internal {
     pub use crate::server::BrontesServer;

@@ -57,26 +57,23 @@ fn initialized_notification() -> &'static str {
     r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
 }
 
-/// Parse the SSE-framed response body emitted in stateful mode and
-/// return the first non-empty `data:` payload as JSON.
-///
-/// The streamable-HTTP server in stateful mode emits an SSE priming
-/// event whose `data:` line is empty (per SEP-1699); the real JSON-RPC
-/// payload follows in a subsequent `data:` line. Skip empty payloads
-/// so we always parse the meaningful one.
+/// Parse an SSE body assuming rmcp 1.6 / SEP-1699 framing: one priming empty
+/// `data:` line, then exactly one JSON payload `data:` line. If rmcp changes
+/// this framing shape, the assertion below catches it.
 fn parse_sse_data(body: &str) -> serde_json::Value {
-    let mut found = None;
-    for line in body.lines() {
-        if let Some(rest) = line.strip_prefix("data:") {
-            let data = rest.trim();
-            if !data.is_empty() {
-                found = Some(data);
-                break;
-            }
-        }
-    }
-    let data = found.unwrap_or_else(|| panic!("no non-empty data: line in SSE body: {body:?}"));
-    serde_json::from_str(data).unwrap_or_else(|e| panic!("bad SSE data JSON {data:?}: {e}"))
+    let payloads: Vec<&str> = body
+        .lines()
+        .filter_map(|l| l.strip_prefix("data:"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert_eq!(
+        payloads.len(),
+        1,
+        "expected exactly one non-empty SSE data line, got {} in body:\n{body}",
+        payloads.len()
+    );
+    serde_json::from_str(payloads[0]).expect("payload is valid JSON")
 }
 
 #[tokio::test]
@@ -91,6 +88,7 @@ async fn http_initialize_then_tools_list_returns_walked_tree() {
             brontes::Config::default(),
             addr,
             server_cancel,
+            vec![],
         )
         .await
         .expect("serve_http");
@@ -199,6 +197,7 @@ async fn http_cancellation_tears_down_within_grace_window() {
             brontes::Config::default(),
             addr,
             server_cancel,
+            vec![],
         )
         .await
         .expect("serve_http");

@@ -71,6 +71,7 @@ pub async fn serve_http(
     cfg: Config,
     addr: SocketAddr,
     cancel: CancellationToken,
+    extra_allowed_hosts: Vec<String>,
 ) -> Result<()> {
     // Eager pre-walk: any schema/config bug surfaces here, not on the
     // first inbound HTTP request.
@@ -89,7 +90,15 @@ pub async fn serve_http(
     // `StreamableHttpServerConfig` is `#[non_exhaustive]`; use the
     // default + builder rather than a struct literal so additive field
     // changes in future rmcp releases are no-ops here.
-    let config = StreamableHttpServerConfig::default().with_cancellation_token(cancel.clone());
+    //
+    // rmcp's default allowed-hosts is ["localhost", "127.0.0.1", "::1"]
+    // (DNS-rebind guard). `with_allowed_hosts` *replaces* the list, so
+    // we start from the default and append any user-supplied hosts.
+    let mut allowed_hosts = StreamableHttpServerConfig::default().allowed_hosts;
+    allowed_hosts.extend(extra_allowed_hosts);
+    let config = StreamableHttpServerConfig::default()
+        .with_cancellation_token(cancel.clone())
+        .with_allowed_hosts(allowed_hosts);
 
     let service: StreamableHttpService<BrontesServer, LocalSessionManager> =
         StreamableHttpService::new(

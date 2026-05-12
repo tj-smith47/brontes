@@ -11,7 +11,7 @@
 
 use std::net::SocketAddr;
 
-use clap::{Arg, ArgMatches, Command, value_parser};
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
@@ -51,6 +51,17 @@ pub(crate) fn build() -> Command {
                 .value_name("LEVEL")
                 .help("Log level (trace, debug, info, warn, error)"),
         )
+        .arg(
+            Arg::new("allow-host")
+                .long("allow-host")
+                .action(ArgAction::Append)
+                .value_name("HOST")
+                .help(
+                    "Add a hostname to rmcp's DNS-rebind allow-list (repeat for multiple). \
+                     Defaults to localhost + 127.0.0.1 + ::1. Specify e.g. \
+                     --allow-host myhost.local for LAN access.",
+                ),
+        )
 }
 
 /// Run `mcp stream` against the supplied CLI tree.
@@ -72,9 +83,11 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
     init_tracing(log_level.or(cfg.log_level));
 
     let raw_host = matches.get_one::<String>("host").map_or("", String::as_str);
-    let port = *matches
-        .get_one::<u16>("port")
-        .expect("clap enforces a default value of 8080 on --port");
+    let port = matches.get_one::<u16>("port").copied().unwrap_or(8080);
+    let extra_allowed_hosts: Vec<String> = matches
+        .get_many::<String>("allow-host")
+        .map(|vals| vals.cloned().collect())
+        .unwrap_or_default();
 
     // Empty host → bind-all. clap's `default_value("")` leaves the
     // raw string empty when the user doesn't pass `--host`; Go's
@@ -100,7 +113,7 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
     // literal `"{addr}"` (no escaping needed for SocketAddr Display).
     tracing::info!("MCP server listening on address \"{addr}\"");
 
-    crate::server::http::serve_http(cli, cfg, addr, cancel).await
+    crate::server::http::serve_http(cli, cfg, addr, cancel, extra_allowed_hosts).await
 }
 
 /// Parse the `--log-level` flag into a [`Level`] when present.
@@ -192,6 +205,29 @@ mod tests {
             names.contains(&"log-level"),
             "missing --log-level: {names:?}"
         );
+        assert!(
+            names.contains(&"allow-host"),
+            "missing --allow-host: {names:?}"
+        );
+    }
+
+    #[test]
+    fn allow_host_flag_parses_multiple_values() {
+        let matches = build()
+            .try_get_matches_from([
+                "stream",
+                "--allow-host",
+                "foo.local",
+                "--allow-host",
+                "bar.local",
+            ])
+            .expect("parses");
+        let hosts: Vec<String> = matches
+            .get_many::<String>("allow-host")
+            .expect("allow-host present")
+            .cloned()
+            .collect();
+        assert_eq!(hosts, vec!["foo.local", "bar.local"]);
     }
 
     #[test]
