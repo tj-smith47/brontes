@@ -25,7 +25,9 @@ pub enum SchemaType {
     Number,
     /// JSON Schema `string`.
     String,
-    /// JSON Schema `string` with `format: "path"`.
+    /// JSON Schema `string` with `format: "path"`. `as_json_type()` returns
+    /// `"string"`; the per-flag schema mapper injects `format: "path"`
+    /// separately into the property schema.
     StringPath,
     /// JSON Schema `array`.
     Array,

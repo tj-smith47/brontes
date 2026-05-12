@@ -75,6 +75,9 @@ mod tests {
 
     #[test]
     fn tool_input_schema_is_object_with_properties() {
+        // Asserts presence of the brontes-required properties without locking
+        // the schema's exhaustive member set — schemars 1.x can add new top-level
+        // keys (e.g., $schema, title) and this test must remain tolerant of that.
         let schema = fresh_tool_input_schema();
         let props = schema
             .get("properties")
@@ -86,6 +89,9 @@ mod tests {
 
     #[test]
     fn tool_output_schema_is_object_with_properties() {
+        // Asserts presence of the brontes-required properties without locking
+        // the schema's exhaustive member set — schemars 1.x can add new top-level
+        // keys (e.g., $schema, title) and this test must remain tolerant of that.
         let schema = fresh_tool_output_schema();
         let props = schema
             .get("properties")

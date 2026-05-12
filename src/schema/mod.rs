@@ -4,6 +4,9 @@
 //! the types module exposes [`SchemaType`] for coarse flag-type classification
 //! and `Config.flag_type_overrides`.
 
+// `cache` is crate-internal — only the per-tool orchestrator consumes it.
+// `types` is public because consumers reference `SchemaType` via
+// `Config.flag_type_overrides`.
 pub(crate) mod cache;
 pub mod types;
 
