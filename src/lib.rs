@@ -21,6 +21,7 @@ mod config;
 mod error;
 mod schema;
 mod selector;
+pub mod selectors;
 mod tool;
 
 pub use annotations::ToolAnnotations;
