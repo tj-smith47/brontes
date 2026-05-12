@@ -107,18 +107,16 @@ fn extract_positional_pattern(raw: &str) -> Option<String> {
     let no_options = no_options.trim();
 
     // 3. Find the first `<` or `[` character: that's where positionals start.
-    //    Everything before that is the command path, which we discard.
-    if let Some(first_arg_idx) = no_options.find(['<', '[']) {
+    //    Everything before that is the command path, which we discard. If
+    //    there's no `<` / `[`, the whole usage was just the command path.
+    no_options.find(['<', '[']).and_then(|first_arg_idx| {
         let positionals = no_options[first_arg_idx..].trim();
         if positionals.is_empty() {
             None
         } else {
             Some(positionals.to_owned())
         }
-    } else {
-        // No positionals — the whole usage was just the command path.
-        None
-    }
+    })
 }
 
 #[cfg(test)]

@@ -345,6 +345,9 @@ mod tests {
         };
         let cloned = ctx.clone();
         assert_eq!(cloned.tool_name, "demo");
+        // Keep the original alive so the clone actually exercises `Clone`
+        // rather than collapsing to a move under `redundant_clone`.
+        assert_eq!(ctx.tool_name, cloned.tool_name);
     }
 
     #[test]

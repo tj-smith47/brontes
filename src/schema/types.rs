@@ -44,7 +44,7 @@ impl SchemaType {
     /// `StringPath` returns `"string"` per the JSON Schema convention; the
     /// `format: "path"` annotation is added separately by the flag mapper.
     #[must_use]
-    pub fn as_json_type(self) -> &'static str {
+    pub const fn as_json_type(self) -> &'static str {
         match self {
             SchemaType::Boolean => "boolean",
             SchemaType::Integer => "integer",

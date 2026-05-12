@@ -30,7 +30,7 @@ use crate::selector::FlagMatcher;
 /// Walk `root`, apply safety filters, apply first-match-wins selectors,
 /// and produce the MCP tool list ready to register with a server.
 ///
-/// Returns `Err(`[`crate::Error::Config`]`)` if any of these path-keyed
+/// Returns <code>Err([crate::Error::Config])</code> if any of these path-keyed
 /// [`Config`] entries names a command path that does not appear in the
 /// walked tree (after safety filtering):
 ///
@@ -95,10 +95,11 @@ pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
         let matched_selector: Option<&crate::selector::Selector> = if cfg.selectors.is_empty() {
             None // no selectors → include unconditionally, no flag filtering
         } else {
-            let found = cfg.selectors.iter().find(|sel| match &sel.cmd {
-                Some(m) => m(&entry.path),
-                None => true, // None cmd matcher claims every passing command
-            });
+            // `None` cmd matcher claims every passing command.
+            let found = cfg
+                .selectors
+                .iter()
+                .find(|sel| sel.cmd.as_ref().is_none_or(|m| m(&entry.path)));
             match found {
                 Some(sel) => Some(sel),
                 None => continue, // no selector claimed this command
@@ -433,9 +434,8 @@ mod tests {
         let tools = generate_tools(&root, &cfg).expect("should succeed");
         // With two selectors both accepting "myapp status", there must be
         // exactly one tool (not two).
-        let status_tools: Vec<_> = tools.iter().filter(|t| t.name.contains("status")).collect();
         assert_eq!(
-            status_tools.len(),
+            tools.iter().filter(|t| t.name.contains("status")).count(),
             1,
             "first-match-wins: only one tool per command"
         );

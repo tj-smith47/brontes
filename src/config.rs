@@ -301,7 +301,7 @@ impl Config {
     /// assert_eq!(cfg.log_level, Some(tracing::Level::DEBUG));
     /// ```
     #[must_use]
-    pub fn log_level(mut self, lvl: Level) -> Self {
+    pub const fn log_level(mut self, lvl: Level) -> Self {
         self.log_level = Some(lvl);
         self
     }
