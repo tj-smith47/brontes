@@ -4,8 +4,23 @@ use std::path::PathBuf;
 
 /// Errors produced by brontes.
 ///
-/// Pair with `Result<(), Error>` in `main` to get Rust's default
-/// `Termination` behavior (debug-print the error and exit non-zero).
+/// `Error` implements [`std::fmt::Display`] (via `thiserror`) so the
+/// recommended `main` shape prints the human-friendly message and
+/// returns a non-zero exit code explicitly:
+///
+/// ```no_run
+/// fn main() -> std::process::ExitCode {
+///     if let Err(e) = run() {
+///         eprintln!("{e}");
+///         return std::process::ExitCode::from(1);
+///     }
+///     std::process::ExitCode::SUCCESS
+/// }
+/// # fn run() -> brontes::Result<()> { Ok(()) }
+/// ```
+///
+/// Using `fn main() -> brontes::Result<()>` also works but emits the
+/// `Debug` form of the error, which is less readable.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {

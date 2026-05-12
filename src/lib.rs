@@ -6,10 +6,9 @@
 //!
 //! # Status
 //!
-//! Phase 1 in progress. The public surface currently exports the crate's
-//! [`Error`] and [`Result`] types. The MCP-tool generation surface
-//! (`generate_tools`) and the `mcp` subcommand tree land in subsequent
-//! Phase 1 / Phase 2 commits.
+//! Early development. The public surface currently exports the crate's
+//! [`Error`] and [`Result`] types. The MCP tool-generation surface and
+//! the `mcp` subcommand tree are not yet exposed.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
