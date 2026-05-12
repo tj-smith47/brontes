@@ -269,14 +269,25 @@ fn classify_by_type_id(arg: &Arg, cmd_path: &str) -> SchemaType {
 
 /// Encode the default value(s) from an arg into a [`Value`].
 ///
-/// - `SetTrue` → `true`, `SetFalse` → `false` (bool, not string).
+/// JSON Schema's `default` describes the value a consumer should assume
+/// when the field is **absent** from the request — for boolean flags, that
+/// is the state when the user did NOT pass the flag. clap's
+/// [`Arg::get_default_values`] returns exactly that absent-state value as
+/// a string (`"false"` for `SetTrue`, `"true"` for `SetFalse`); we round-
+/// trip through the string so a user-supplied `.default_value(...)`
+/// override is honored uniformly.
+///
+/// - `SetTrue` / `SetFalse` → bool parsed from the default string (so a
+///   plain `SetTrue` → `false`, plain `SetFalse` → `true`, and explicit
+///   `.default_value("true")` overrides are respected).
 /// - `Count` → number (0 when no parseable default is present).
 /// - Single default → string.
 /// - Multiple defaults → array of strings.
 fn encode_defaults(arg: &Arg, defaults: &[String]) -> Value {
     match arg.get_action() {
-        ArgAction::SetTrue => Value::Bool(true),
-        ArgAction::SetFalse => Value::Bool(false),
+        ArgAction::SetTrue | ArgAction::SetFalse => {
+            Value::Bool(defaults.first().is_some_and(|s| s == "true"))
+        }
         ArgAction::Count => defaults
             .first()
             .and_then(|s| s.parse::<u64>().ok())
@@ -412,6 +423,68 @@ mod tests {
         let (props, required) = schema_for(&cmd);
         assert!(props.contains_key("input"), "input in props");
         assert!(required.contains(&"input".to_owned()), "input in required");
+    }
+
+    #[test]
+    fn encode_defaults_set_true_with_false_string_returns_false() {
+        // The realistic case: when clap's tree-build normalization runs
+        // (during full Command construction with subcommands, as in the
+        // make-mcp example), SetTrue arrives at encode_defaults with
+        // `["false"]` as the default — that is the absent-state value.
+        // Pre-fix, brontes hardcoded `Bool(true)` for any SetTrue, which
+        // produced a `default:true` lie in the emitted schema. The fix
+        // parses the actual default string clap provides.
+        let arg = Arg::new("dry-run")
+            .long("dry-run")
+            .action(ArgAction::SetTrue);
+        let encoded = encode_defaults(&arg, &["false".to_string()]);
+        assert_eq!(encoded, Value::Bool(false));
+    }
+
+    #[test]
+    fn encode_defaults_set_false_with_true_string_returns_true() {
+        // Mirror: SetFalse's absent-state default surfaces as the string
+        // `"true"` from clap, which must encode as Bool(true).
+        let arg = Arg::new("noisy").long("noisy").action(ArgAction::SetFalse);
+        let encoded = encode_defaults(&arg, &["true".to_string()]);
+        assert_eq!(encoded, Value::Bool(true));
+    }
+
+    #[test]
+    fn encode_defaults_set_true_with_explicit_true_default_returns_true() {
+        // A user can override the absent-state default to `"true"` via
+        // `.default_value("true")` on a SetTrue arg; brontes must honor
+        // that — emitting Bool(true) even though plain SetTrue produces
+        // Bool(false). End-to-end test for the same is covered through
+        // `schema_for` below.
+        let arg = Arg::new("opt-in")
+            .long("opt-in")
+            .action(ArgAction::SetTrue)
+            .default_value("true");
+        let encoded = encode_defaults(&arg, &["true".to_string()]);
+        assert_eq!(encoded, Value::Bool(true));
+    }
+
+    #[test]
+    fn set_true_flag_with_explicit_default_value_true_overrides() {
+        // End-to-end through `build_flags_schema`: when the user sets
+        // `.default_value("true")` on a SetTrue arg, the emitted JSON
+        // schema must carry `default: true`. Anchors the override path
+        // against future regression of the boolean-default handling.
+        let cmd = cmd_with_arg(
+            Arg::new("opt-in")
+                .long("opt-in")
+                .action(ArgAction::SetTrue)
+                .default_value("true"),
+        );
+        let (props, _) = schema_for(&cmd);
+        let prop = props.get("opt-in").expect("opt-in in props");
+        assert_eq!(prop["type"], json!("boolean"));
+        assert_eq!(
+            prop["default"],
+            json!(true),
+            "explicit .default_value(\"true\") on SetTrue must surface as default:true"
+        );
     }
 
     #[test]

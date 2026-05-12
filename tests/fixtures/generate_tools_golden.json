@@ -31,7 +31,7 @@
               "type": "integer"
             },
             "verbose": {
-              "default": true,
+              "default": false,
               "description": "Increase output verbosity",
               "type": "boolean"
             }
@@ -111,7 +111,7 @@
               "type": "array"
             },
             "verbose": {
-              "default": true,
+              "default": false,
               "description": "Increase output verbosity",
               "type": "boolean"
             }
@@ -175,12 +175,12 @@
               "type": "integer"
             },
             "debug": {
-              "default": true,
+              "default": false,
               "description": "Enable debug output",
               "type": "boolean"
             },
             "verbose": {
-              "default": true,
+              "default": false,
               "description": "Increase output verbosity",
               "type": "boolean"
             }
