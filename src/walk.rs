@@ -176,6 +176,22 @@ mod tests {
         assert!(!is_group_only(&cmd));
     }
 
+    #[test]
+    fn is_group_only_excludes_globally_marked_args() {
+        // clap propagates `.global(true)` args from a parent onto every
+        // descendant when `Command::build()` runs. is_group_only must not
+        // count those propagated copies as "local user args" — otherwise a
+        // single root-level global flag would prevent every intermediate
+        // group node in the tree from being filtered. `Arg::is_global_set()`
+        // is true both for the originally-declared arg and for the
+        // propagated copies, so filtering on it covers both shapes.
+        let cmd = Command::new("group")
+            .subcommand_required(true)
+            .subcommand(Command::new("noop"))
+            .arg(Arg::new("verbose").long("verbose").global(true));
+        assert!(is_group_only(&cmd));
+    }
+
     // ── TestCmdFilter parity port (ophis config_test.go::TestCmdFilter) ───
     //
     // Dropped row: "no run cmd" — ophis filters cobra commands whose Run field is
