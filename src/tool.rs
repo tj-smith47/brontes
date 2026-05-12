@@ -39,7 +39,7 @@
 ///     args: vec!["file1.txt".into(), "file2.txt".into()],
 /// };
 /// ```
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ToolInput {
     /// Flags provided to the CLI command, keyed by long flag name (e.g., `log-level`).
     pub flags: serde_json::Map<String, serde_json::Value>,
@@ -79,7 +79,7 @@ pub struct ToolInput {
 ///     exit_code: 0,
 /// };
 /// ```
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ToolOutput {
     /// Standard output captured from the subprocess.
     pub stdout: String,

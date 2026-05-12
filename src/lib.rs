@@ -18,11 +18,13 @@
 
 mod annotations;
 mod error;
+mod schema;
 mod selector;
 mod tool;
 
 pub use annotations::ToolAnnotations;
 pub use error::{Error, Result};
+pub use schema::SchemaType;
 pub use selector::{
     BoxedNext, CmdMatcher, FlagMatcher, Middleware, MiddlewareCtx, MiddlewareResult, Selector,
 };
