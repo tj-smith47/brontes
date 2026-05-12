@@ -76,8 +76,9 @@ pub struct Config {
     /// Default environment variables merged into every tool call's environment.
     ///
     /// Per-call `env` overrides (set by the MCP client at invocation time) win
-    /// on key conflict.  An empty map causes the `env` field to be omitted from
-    /// the wire payload.
+    /// on key conflict.  An empty merged map (no default entries AND no per-call
+    /// entries) is expected to be omitted from the MCP wire payload — that
+    /// omission is enforced by the tool-call builder, not by `Config` itself.
     pub default_env: HashMap<String, String>,
 
     /// Per-command MCP annotation hints, keyed by full command path
@@ -296,11 +297,29 @@ impl Config {
         self
     }
 
-    /// Set the MCP `Implementation` identity surfaced to MCP clients.
+    /// Set the MCP `Implementation` identity surfaced to MCP clients (server
+    /// name, version, optional title/description/URL/icons). Leave unset to
+    /// fall through to `rmcp::model::Implementation::default()`, which
+    /// derives from `CARGO_PKG_NAME` and `CARGO_PKG_VERSION` of the current
+    /// binary.
     ///
-    /// When not set, the server identity is derived from `CARGO_PKG_NAME`
-    /// and `CARGO_PKG_VERSION` at build time via
-    /// [`rmcp::model::Implementation::default()`].
+    /// Set explicitly when:
+    /// - your CLI is rebadged under a different name to MCP clients than its
+    ///   binary name (e.g., binary `myapp-cli` but MCP server identifies as
+    ///   `"MyApp Agent"`);
+    /// - you ship two binaries that should appear distinct to the same MCP
+    ///   client (set version or title differently).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use brontes::Config;
+    /// use rmcp::model::Implementation;
+    ///
+    /// let cfg = Config::default()
+    ///     .implementation(Implementation::new("my-agent", "0.1.0"));
+    /// # let _ = cfg;
+    /// ```
     #[must_use]
     pub fn implementation(mut self, imp: rmcp::model::Implementation) -> Self {
         self.implementation = Some(imp);
@@ -426,6 +445,49 @@ mod tests {
         let stored = cfg.implementation.unwrap();
         assert_eq!(stored.name, "test-server");
         assert_eq!(stored.version, "0.1.0");
+    }
+
+    #[test]
+    fn default_env_last_writer_wins() {
+        // Calling `.default_env()` twice on the same key should leave the
+        // second value in place. This pins HashMap::insert override
+        // semantics so a future refactor (e.g., switching to entry().or_insert())
+        // gets caught.
+        let cfg = Config::default()
+            .default_env("X", "1")
+            .default_env("X", "2");
+        assert_eq!(cfg.default_env.get("X").map(String::as_str), Some("2"));
+        assert_eq!(cfg.default_env.len(), 1);
+    }
+
+    #[test]
+    fn annotation_last_writer_wins() {
+        // Calling `.annotation()` twice on the same command path should
+        // replace the prior annotation. Pins HashMap::insert override
+        // semantics for the annotations map.
+        let cfg = Config::default()
+            .annotation(
+                "my-cli list",
+                ToolAnnotations {
+                    read_only_hint: Some(true),
+                    ..Default::default()
+                },
+            )
+            .annotation(
+                "my-cli list",
+                ToolAnnotations {
+                    read_only_hint: Some(false),
+                    destructive_hint: Some(true),
+                    ..Default::default()
+                },
+            );
+        let ann = cfg
+            .annotations
+            .get("my-cli list")
+            .expect("annotation present");
+        assert_eq!(ann.read_only_hint, Some(false));
+        assert_eq!(ann.destructive_hint, Some(true));
+        assert_eq!(cfg.annotations.len(), 1);
     }
 
     #[test]
