@@ -328,6 +328,36 @@ async fn read_capped<R: AsyncRead + Unpin>(
     buf
 }
 
+// ---------------------------------------------------------------------------
+// Test-only re-exports (consumed via `lib.rs::__test_internal`).
+//
+// `append_flag` and `read_capped` are private implementation details; the
+// warn-fire integration test crate (`tests/warn_fires.rs`) needs to drive
+// them directly so the §11 #7 / OUTPUT_CAP_BYTES `tracing::warn!` events
+// can be asserted without spinning up a full MCP server + subprocess.
+// ---------------------------------------------------------------------------
+
+/// Test-only proxy for [`append_flag`]. Exposed via
+/// [`crate::__test_internal::render_flag_argv`].
+pub(crate) fn append_flag_for_test(
+    out: &mut Vec<String>,
+    name: &str,
+    value: &Value,
+    tool_name: &str,
+) {
+    append_flag(out, name, value, tool_name);
+}
+
+/// Test-only proxy for [`read_capped`]. Exposed via
+/// [`crate::__test_internal::drain_capped`].
+pub(crate) async fn read_capped_for_test<R: AsyncRead + Unpin>(
+    reader: R,
+    stream_label: &'static str,
+    tool_name: String,
+) -> Vec<u8> {
+    read_capped(reader, stream_label, tool_name).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -38,6 +38,20 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
 /// or `RUST_LOG`); a `tracing::warn!` records the offending value so users
 /// notice the typo at startup rather than wondering why their level had
 /// no effect.
+/// Test-only proxy for [`parse_log_level`]. Exposed via
+/// [`crate::__test_internal::parse_start_log_level`] so the warn-fire
+/// test crate can assert the §11 #9 unrecognized-`--log-level`
+/// `tracing::warn!` fires without driving the full `serve_stdio` runtime.
+pub(crate) fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
+    parse_log_level(matches)
+}
+
+/// Test-only proxy for [`build`]. Exposed via
+/// [`crate::__test_internal::start_subcommand`].
+pub(crate) fn build_for_test() -> Command {
+    build()
+}
+
 fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
     let raw = matches.get_one::<String>("log-level")?;
     match raw.to_ascii_lowercase().as_str() {

@@ -86,11 +86,79 @@ pub use tool::{ToolInput, ToolOutput};
 
 /// Internal-test access point: not a stable surface, do not use from
 /// downstream crates. Re-exported only so the integration-test crate can
-/// drive [`server::BrontesServer`] over an in-memory duplex transport
-/// or [`server::http::serve_http`] against an ephemeral local port.
+/// drive [`server::BrontesServer`] over an in-memory duplex transport,
+/// [`server::http::serve_http`] against an ephemeral local port, or the
+/// private helpers that emit `tracing::warn!` events the warn-fire test
+/// suite asserts on.
 // Not a semver-stable surface. Downstream crates relying on this break without notice.
 #[doc(hidden)]
 pub mod __test_internal {
     pub use crate::server::BrontesServer;
     pub use crate::server::http::serve_http;
+
+    /// Drive the same flag-rendering logic that `mcp start` / `mcp stream`
+    /// use when translating a tool call's JSON `flags` map into argv. The
+    /// integration test crate uses this to assert that the §11 #7
+    /// nested-non-scalar `tracing::warn!` events fire as documented.
+    #[must_use]
+    pub fn render_flag_argv(
+        flag_name: &str,
+        value: &serde_json::Value,
+        tool_name: &str,
+    ) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        crate::exec::append_flag_for_test(&mut out, flag_name, value, tool_name);
+        out
+    }
+
+    /// Drive the `OUTPUT_CAP_BYTES` capture path on an in-memory reader so
+    /// the warn-fire test crate can assert the soft-cap `tracing::warn!`
+    /// fires exactly once per stream when output exceeds the cap. The
+    /// returned `Vec<u8>` is the retained bytes — the test does not need
+    /// it but receives it for symmetry with the production reader.
+    pub async fn drain_capped<R>(
+        reader: R,
+        stream_label: &'static str,
+        tool_name: String,
+    ) -> Vec<u8>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        crate::exec::read_capped_for_test(reader, stream_label, tool_name).await
+    }
+
+    /// Exposed cap (16 MiB) so the warn-fire test crate can build a
+    /// reader that overshoots without re-deriving the constant.
+    pub const OUTPUT_CAP_BYTES: usize = crate::exec::OUTPUT_CAP_BYTES;
+
+    /// Drive the `mcp start` `--log-level` parser on a prebuilt
+    /// `ArgMatches`. Returns `Some(level)` on a recognized value, `None`
+    /// on an unrecognized value (which also emits the §11 #9
+    /// `tracing::warn!` the warn-fire test crate asserts on).
+    #[must_use]
+    pub fn parse_start_log_level(matches: &clap::ArgMatches) -> Option<tracing::Level> {
+        crate::subcommands::start::parse_log_level_for_test(matches)
+    }
+
+    /// Build the `mcp start` subcommand. Lets the test crate build an
+    /// `ArgMatches` with `--log-level <raw>` via the same parser shape
+    /// the production code uses.
+    #[must_use]
+    pub fn start_subcommand() -> clap::Command {
+        crate::subcommands::start::build_for_test()
+    }
+
+    /// Drive the `mcp stream` `--log-level` parser. Same shape as
+    /// [`parse_start_log_level`]; both surfaces carry the same warn so
+    /// the test suite exercises each independently.
+    #[must_use]
+    pub fn parse_stream_log_level(matches: &clap::ArgMatches) -> Option<tracing::Level> {
+        crate::subcommands::stream::parse_log_level_for_test(matches)
+    }
+
+    /// Build the `mcp stream` subcommand for `--log-level` test driving.
+    #[must_use]
+    pub fn stream_subcommand() -> clap::Command {
+        crate::subcommands::stream::build_for_test()
+    }
 }

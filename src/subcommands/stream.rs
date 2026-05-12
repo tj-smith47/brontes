@@ -116,6 +116,21 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
     crate::server::http::serve_http(cli, cfg, addr, cancel, extra_allowed_hosts).await
 }
 
+/// Test-only proxy for [`parse_log_level`]. Exposed via
+/// [`crate::__test_internal::parse_stream_log_level`] so the warn-fire
+/// test crate can assert the §11 #9 unrecognized-`--log-level`
+/// `tracing::warn!` fires for the `mcp stream` surface independently
+/// of `mcp start`.
+pub(crate) fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
+    parse_log_level(matches)
+}
+
+/// Test-only proxy for [`build`]. Exposed via
+/// [`crate::__test_internal::stream_subcommand`].
+pub(crate) fn build_for_test() -> Command {
+    build()
+}
+
 /// Parse the `--log-level` flag into a [`Level`] when present.
 fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
     let raw = matches.get_one::<String>("log-level")?;
