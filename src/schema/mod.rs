@@ -76,11 +76,14 @@ pub(crate) fn build_input_schema(cmd: &Command, cfg: &Config, cmd_path: &str) ->
 /// Build the per-tool output schema.
 ///
 /// The `ToolOutput` shape (`stdout` / `stderr` / `exit_code`) does not vary
-/// per command; this function returns the cached base schema unchanged.
+/// per command; this function shares the single cached [`Arc`] allocation
+/// across every tool (via `Arc::clone`), rather than allocating fresh.
 // `generate_tools` (Task 13) will be the first external consumer.
 #[allow(dead_code)]
 pub(crate) fn build_output_schema() -> Arc<JsonObject> {
-    Arc::new(cache::fresh_tool_output_schema())
+    // Output shape is invariant per tool — share the single cached
+    // Arc allocation across every Tool's output_schema field.
+    Arc::clone(&cache::TOOL_OUTPUT_BASE_SCHEMA)
 }
 
 /// Build the per-tool description string.
@@ -180,14 +183,24 @@ mod tests {
 
     #[test]
     fn output_schema_matches_cache() {
-        let schema = build_output_schema();
-        let props = schema
+        // Behavioral assertion: output schema has the expected ToolOutput
+        // properties.
+        let s1 = build_output_schema();
+        let props = s1
             .get("properties")
             .and_then(|v| v.as_object())
             .expect("output schema must have properties");
         assert!(props.contains_key("stdout"), "must have 'stdout'");
         assert!(props.contains_key("stderr"), "must have 'stderr'");
         assert!(props.contains_key("exit_code"), "must have 'exit_code'");
+
+        // Allocation-sharing assertion: build_output_schema returns the SAME
+        // Arc allocation each call (Arc::clone of the cached static).
+        let s2 = build_output_schema();
+        assert!(
+            Arc::ptr_eq(&s1, &s2),
+            "build_output_schema must Arc::clone the cached static, not allocate fresh"
+        );
     }
 
     #[test]
