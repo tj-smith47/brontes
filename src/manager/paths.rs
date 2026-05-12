@@ -384,12 +384,13 @@ fn vscode_config_path_windows_from(
             .join("User")
             .join("mcp.json");
     }
-    // No home, no USERPROFILE — fall back to the literal default-user
-    // location so the caller still gets *some* path. Error surfaces at
-    // file open. Mirrors the Cursor Windows resolver's "always produce a
-    // PathBuf" intent.
-    PathBuf::from(r"C:\Users\Default")
-        .join("AppData")
+    // No home, no USERPROFILE — match Cursor's relative fallback shape
+    // (the home-prefix dropped) so we still produce *some* path the caller
+    // can present to the user. The error surfaces at file open. ophis's
+    // `vscode_windows.go` has no `C:\Users\Default` literal (that pattern
+    // is Claude-only per PLAN line 301), so a relative fallback is more
+    // faithful to the parity goal than inventing one.
+    PathBuf::from("AppData")
         .join("Roaming")
         .join("Code")
         .join("User")
@@ -771,16 +772,22 @@ mod tests {
     }
 
     #[test]
-    fn vscode_windows_default_users_fallback_when_all_unresolved() {
-        // No home, no USERPROFILE — fall back to the literal default-user
-        // location so the caller still gets a usable PathBuf; error surfaces
-        // at file open.
+    fn vscode_windows_relative_fallback_when_all_unresolved() {
+        // No home, no USERPROFILE — fall back to a relative path with the
+        // home-prefix dropped, mirroring Cursor's tertiary shape. ophis's
+        // `vscode_windows.go` has no `C:\Users\Default` literal (that
+        // pattern is Claude-only per PLAN line 301), so we do not invent
+        // an absolute fallback here. The error surfaces at file open.
         let path = vscode_config_path_windows_from(None, None);
-        let s = path.to_string_lossy().into_owned();
-        assert!(s.contains("Default"), "got {s}");
-        assert!(s.contains("AppData"), "got {s}");
-        assert!(s.contains("Code"), "got {s}");
-        assert!(s.contains("mcp.json"), "got {s}");
+        assert_eq!(
+            path,
+            PathBuf::from("AppData")
+                .join("Roaming")
+                .join("Code")
+                .join("User")
+                .join("mcp.json")
+        );
+        assert!(path.is_relative(), "tertiary fallback must be relative");
     }
 
     // ── VSCode workspace-mode resolver ────────────────────────────────

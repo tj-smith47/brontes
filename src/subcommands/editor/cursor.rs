@@ -83,7 +83,7 @@ pub(crate) fn build() -> Command {
 /// - [`crate::Error::Config`] when the `--env` flag is malformed or when
 ///   the leaf is unknown / absent.
 /// - [`crate::Error::Io`] when [`std::env::current_exe`] fails.
-/// - [`crate::Error::EditorConfigRead`] / `Parse` / `Backup` / `Write`
+/// - [`crate::Error::EditorConfigRead`] / `Json` / `Backup` / `Write`
 ///   when the underlying [`Manager`] hits a filesystem error.
 pub(crate) fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
     match matches.subcommand() {
