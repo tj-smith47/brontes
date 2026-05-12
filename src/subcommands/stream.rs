@@ -131,20 +131,8 @@ pub(crate) fn build_for_test() -> Command {
     build()
 }
 
-/// Parse the `--log-level` flag into a [`Level`] when present.
 fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
-    let raw = matches.get_one::<String>("log-level")?;
-    match raw.to_ascii_lowercase().as_str() {
-        "trace" => Some(Level::TRACE),
-        "debug" => Some(Level::DEBUG),
-        "info" => Some(Level::INFO),
-        "warn" | "warning" => Some(Level::WARN),
-        "error" => Some(Level::ERROR),
-        other => {
-            tracing::warn!(value = %other, "unrecognized --log-level; falling back to default");
-            None
-        }
-    }
+    super::common::parse_log_level(matches)
 }
 
 /// Install a `tracing_subscriber` pointed at stderr.

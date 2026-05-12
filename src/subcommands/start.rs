@@ -32,12 +32,6 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
     crate::server::stdio::serve_stdio(cli, cfg, log_level).await
 }
 
-/// Parse the `--log-level` flag into a [`Level`] when present.
-///
-/// Invalid values return `None` (i.e., fall through to `Config::log_level`
-/// or `RUST_LOG`); a `tracing::warn!` records the offending value so users
-/// notice the typo at startup rather than wondering why their level had
-/// no effect.
 /// Test-only proxy for [`parse_log_level`]. Exposed via
 /// [`crate::__test_internal::parse_start_log_level`] so the warn-fire
 /// test crate can assert the §11 #9 unrecognized-`--log-level`
@@ -53,18 +47,7 @@ pub(crate) fn build_for_test() -> Command {
 }
 
 fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
-    let raw = matches.get_one::<String>("log-level")?;
-    match raw.to_ascii_lowercase().as_str() {
-        "trace" => Some(Level::TRACE),
-        "debug" => Some(Level::DEBUG),
-        "info" => Some(Level::INFO),
-        "warn" | "warning" => Some(Level::WARN),
-        "error" => Some(Level::ERROR),
-        other => {
-            tracing::warn!(value = %other, "unrecognized --log-level; falling back to default");
-            None
-        }
-    }
+    super::common::parse_log_level(matches)
 }
 
 #[cfg(test)]

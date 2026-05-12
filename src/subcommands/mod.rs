@@ -17,6 +17,7 @@
 //! [`crate::handle`] disambiguate "the `mcp` subcommand brontes added" from
 //! "a `mcp` subcommand the user happened to register before mounting brontes".
 
+pub(crate) mod common;
 pub(crate) mod editor;
 pub(crate) mod start;
 pub(crate) mod stream;

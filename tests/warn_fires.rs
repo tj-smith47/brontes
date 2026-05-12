@@ -43,7 +43,7 @@
 mod support;
 
 use brontes::{Config, Selector, selectors};
-use clap::{Arg, ArgAction, Command};
+use clap::Command;
 use serde_json::json;
 
 use support::{assert_contains_all, capture_warns, capture_warns_async, count_occurrences};
@@ -415,15 +415,4 @@ fn read_capped_under_cap_no_warn() {
         !captured.contains("tool output exceeded soft cap"),
         "below-cap must not warn; captured: {captured}"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Compilation guard: the `ArgAction` import is here so a future test that
-// needs ArgAction-driven matches can rely on it being in scope without
-// pulling additional `use` lines that drift from the rest of the file.
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)]
-fn _compilation_guard_arg_action() -> Arg {
-    Arg::new("dummy").long("dummy").action(ArgAction::SetTrue)
 }
