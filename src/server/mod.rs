@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use clap::Command;
+use futures::future::BoxFuture;
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::model::{
@@ -28,6 +29,8 @@ use rmcp::service::{RequestContext, RoleServer};
 
 use crate::Config;
 use crate::Result;
+use crate::command::ResolvedTool;
+use crate::selector::{BoxedNext, MiddlewareCtx, MiddlewareResult};
 use crate::tool::{ToolInput, ToolOutput};
 
 /// MCP server handler that exposes a walked clap tree as MCP tools.
@@ -52,8 +55,9 @@ pub struct BrontesServer {
     cli: Command,
     /// User-facing configuration: selectors, annotations, default env, etc.
     cfg: Arc<Config>,
-    /// Tool list, computed once at construction. See type-level docs.
-    tools: Vec<Tool>,
+    /// Resolved tool list (descriptor + claimed middleware + clap path),
+    /// computed once at construction. See type-level docs.
+    tools: Vec<ResolvedTool>,
 }
 
 impl BrontesServer {
@@ -74,7 +78,7 @@ impl BrontesServer {
     #[doc(hidden)]
     pub fn new(mut cli: Command, cfg: Config) -> Result<Self> {
         cli.build();
-        let tools = crate::generate_tools(&cli, &cfg)?;
+        let tools = crate::command::generate_tools_with_middleware(&cli, &cfg)?;
         Ok(Self {
             cli,
             cfg: Arc::new(cfg),
@@ -104,12 +108,21 @@ impl BrontesServer {
         InitializeResult::new(capabilities).with_server_info(server_info)
     }
 
-    /// Look up a tool by its MCP name in the cached tool list.
+    /// Look up a tool descriptor by its MCP name in the cached tool list.
     ///
-    /// Called by [`Self::call_tool`] to validate the request before
-    /// dispatching to [`crate::exec`].
+    /// Returns the [`Tool`] half of the cached [`ResolvedTool`] entry so
+    /// callers that only care about the descriptor (e.g. `get_tool` for
+    /// rmcp's task-support routing) do not have to know about the internal
+    /// middleware-cache shape.
     fn find_tool(&self, name: &str) -> Option<Tool> {
-        self.tools.iter().find(|t| t.name.as_ref() == name).cloned()
+        self.find_resolved(name).map(|r| r.tool.clone())
+    }
+
+    /// Look up the full [`ResolvedTool`] (descriptor + claimed middleware +
+    /// command path) by MCP name. Used by [`Self::call_tool`] to dispatch
+    /// the middleware chain against the exec step.
+    fn find_resolved(&self, name: &str) -> Option<&ResolvedTool> {
+        self.tools.iter().find(|t| t.tool.name.as_ref() == name)
     }
 }
 
@@ -123,7 +136,10 @@ impl ServerHandler for BrontesServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult::with_all_items(self.tools.clone()))
+        // Project the cache down to the wire shape: clients receive
+        // descriptors only, not the runtime-side middleware references.
+        let tools: Vec<Tool> = self.tools.iter().map(|r| r.tool.clone()).collect();
+        Ok(ListToolsResult::with_all_items(tools))
     }
 
     async fn call_tool(
@@ -136,12 +152,12 @@ impl ServerHandler for BrontesServer {
         // Validate the tool exists in the current walked tree. The MCP
         // wrapper trait already calls `get_tool` for task-support routing,
         // but we want a clean per-call check at the exec boundary too.
-        if self.find_tool(name).is_none() {
+        let Some(resolved) = self.find_resolved(name) else {
             return Err(McpError::invalid_params(
                 format!("unknown tool: {name}"),
                 None,
             ));
-        }
+        };
 
         // Deserialize the client-supplied arguments into ToolInput. Default
         // to an empty payload when the client sends no arguments at all.
@@ -153,22 +169,134 @@ impl ServerHandler for BrontesServer {
         };
 
         // Merge default_env with any tool-call-specific env overrides.
-        // Per-call overrides win on conflict (none are exposed in this
-        // task; Task #2 wires middleware-supplied overrides).
+        // Per-call overrides win on conflict (none are exposed yet;
+        // middleware can shape ToolInput before forwarding).
         let env: HashMap<String, String> = self.cfg.default_env.clone();
 
-        match crate::exec::run_tool(name, &input, &env, context.ct.clone()).await {
+        let middleware = resolved.middleware.clone();
+        let ctx = MiddlewareCtx {
+            cancellation_token: context.ct.clone(),
+            tool_name: name.to_string(),
+            input,
+        };
+
+        // Build the leaf-of-chain: a one-shot async closure that invokes the
+        // subprocess via [`crate::exec::run_tool`]. Owned captures (`env`,
+        // `tool_name`) keep the future `'static` for `tokio::spawn`.
+        let exec_tool_name = name.to_string();
+        let next: BoxedNext = Box::new(
+            move |ctx_inner: MiddlewareCtx| -> BoxFuture<'static, MiddlewareResult> {
+                Box::pin(async move {
+                    crate::exec::run_tool(
+                        &exec_tool_name,
+                        &ctx_inner.input,
+                        &env,
+                        ctx_inner.cancellation_token,
+                    )
+                    .await
+                })
+            },
+        );
+
+        // Always wrap the chain in `tokio::spawn` (whether or not middleware
+        // is present) so a panic in either layer becomes a recoverable
+        // `JoinError` rather than tearing down the rmcp service task.
+        let join_handle = if let Some(mw) = middleware {
+            tokio::spawn(async move { mw(ctx, next).await })
+        } else {
+            tokio::spawn(async move { next(ctx).await })
+        };
+
+        let result: MiddlewareResult = match join_handle.await {
+            Ok(r) => r,
+            Err(join_err) if join_err.is_panic() => {
+                let payload = join_err.try_into_panic().ok().map_or_else(
+                    || "unknown panic payload".to_string(),
+                    |b| panic_message_from(&*b),
+                );
+                // Surface the panic as a tool_error (CallToolResult with
+                // `is_error: true`) rather than a JSON-RPC Err. The MCP
+                // server keeps running; the client learns this one call
+                // failed without the transport tearing down.
+                return Ok(tool_error_result(name, &crate::Error::Panic(payload)));
+            }
+            Err(join_err) => {
+                return Ok(tool_error_result(
+                    name,
+                    &crate::Error::Panic(format!("middleware/exec task join error: {join_err}")),
+                ));
+            }
+        };
+
+        match result {
             Ok(output) => Ok(tool_output_to_result(name, &output)),
-            Err(e) => Err(McpError::internal_error(
-                format!("tool '{name}' failed to execute: {e}"),
-                None,
-            )),
+            // Middleware-level or exec-level errors propagate as
+            // `tool_error` so a single misbehaving call cannot kill the
+            // server. Spawn failures, timeouts, cancellation, etc. all
+            // land here.
+            Err(e) => Ok(tool_error_result(name, &e)),
         }
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.find_tool(name)
     }
+}
+
+/// Render a middleware-or-exec failure as a [`CallToolResult`] with
+/// `is_error: true`. The error message is included in the text content; the
+/// structured payload carries the brontes error category so clients can
+/// distinguish (e.g.) a spawn failure from a panic.
+fn tool_error_result(name: &str, e: &crate::Error) -> CallToolResult {
+    let body = format!("tool '{name}' failed to execute: {e}");
+    let mut r = CallToolResult::error(vec![Content::text(body.clone())]);
+    r.structured_content = Some(serde_json::json!({
+        "error": body,
+        "category": brontes_error_category(e),
+    }));
+    r
+}
+
+/// Short, stable string category for the [`crate::Error`] variant.
+///
+/// Used in the `structured_content` of a `tool_error` result so a client can
+/// programmatically tell `Spawn` (subprocess could not be started) apart
+/// from `Panic` (middleware/exec task panicked) without parsing
+/// human-readable text.
+const fn brontes_error_category(e: &crate::Error) -> &'static str {
+    // `Error` is `#[non_exhaustive]` for downstream callers but exhaustive
+    // inside the crate; any future variant added here MUST extend this
+    // match (no wildcard arm by design).
+    match e {
+        crate::Error::Config(_) => "config",
+        crate::Error::Io { .. } => "io",
+        crate::Error::Spawn(_) => "spawn",
+        crate::Error::Schema(_) => "schema",
+        crate::Error::EditorConfigRead { .. }
+        | crate::Error::EditorConfigParse { .. }
+        | crate::Error::EditorConfigBackup { .. }
+        | crate::Error::EditorConfigWrite { .. } => "editor_config",
+        crate::Error::Panic(_) => "panic",
+        crate::Error::McpInitialize(_) => "mcp_initialize",
+        crate::Error::Mcp(_) => "mcp",
+    }
+}
+
+/// Best-effort recovery of a panic payload's message.
+///
+/// `tokio::task::JoinError::try_into_panic` returns the `Box<dyn Any + Send>`
+/// payload that the panicking task carried. Standard panic macros stash a
+/// `&'static str` or `String` there; we downcast in that order, falling back
+/// to a generic label so the propagated [`crate::Error::Panic`] always
+/// carries *something* useful in its `Display` impl.
+fn panic_message_from(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "unknown panic payload".to_string()
 }
 
 /// Render a [`ToolOutput`] (captured stdout/stderr/exit code) as the MCP

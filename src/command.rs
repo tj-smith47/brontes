@@ -44,7 +44,32 @@ use rmcp::model::Tool;
 
 use crate::Result;
 use crate::config::Config;
-use crate::selector::FlagMatcher;
+use crate::selector::{FlagMatcher, Middleware};
+
+/// A walked-and-filtered command paired with the runtime data the MCP server
+/// needs to dispatch a tool call: the MCP [`Tool`] descriptor, the optional
+/// [`Middleware`] claimed by the matching selector, and the space-joined clap
+/// path (handy for diagnostic messages even though [`crate::exec::run_tool`]
+/// reconstructs argv from the tool name).
+///
+/// This type is internal: it is the cache shape held by
+/// [`crate::server::BrontesServer`] so that
+/// [`generate_tools_with_middleware`] runs exactly once at server
+/// construction. Downstream consumers continue to use [`generate_tools`],
+/// which projects this struct down to a plain `Vec<Tool>` for offline
+/// inspection.
+pub(crate) struct ResolvedTool {
+    /// The MCP tool descriptor handed back from `tools/list`.
+    pub tool: Tool,
+    /// Middleware from the selector that claimed this command, if any.
+    /// `None` means the exec step runs unwrapped.
+    pub middleware: Option<Middleware>,
+    /// Space-joined clap command path (e.g. `"my-cli deploy prod"`).
+    /// Retained for diagnostics; argv construction lives in
+    /// [`crate::exec::build_command_args`] which keys off the MCP tool name.
+    #[allow(dead_code)] // surfaced through Debug-style diagnostics only
+    pub command_path: String,
+}
 
 /// Walk `root`, apply safety filters, apply first-match-wins selectors,
 /// and produce the MCP tool list ready to register with a server.
@@ -82,6 +107,29 @@ use crate::selector::FlagMatcher;
 /// references a command path or flag name that does not exist in the walked
 /// tree, or if an introspectable selector factory captured an unknown path.
 pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
+    Ok(generate_tools_with_middleware(root, cfg)?
+        .into_iter()
+        .map(|r| r.tool)
+        .collect())
+}
+
+/// Same walk + selector pass as [`generate_tools`], but retains each tool's
+/// claimed [`Middleware`] (if any) and the clap command path alongside the
+/// MCP [`Tool`] descriptor.
+///
+/// This is the runtime feed for [`crate::server::BrontesServer`]: when a
+/// `tools/call` request arrives, the server needs to invoke the middleware
+/// chain claimed by the same selector that produced the tool descriptor.
+/// Building both halves in one pass keeps the selector-evaluation logic
+/// single-sourced.
+///
+/// # Errors
+///
+/// Same conditions as [`generate_tools`].
+pub(crate) fn generate_tools_with_middleware(
+    root: &Command,
+    cfg: &Config,
+) -> Result<Vec<ResolvedTool>> {
     // clap propagates `.global(true)` args lazily on `Command::build()`.
     // Clone-then-build ensures every walked command's `get_arguments()`
     // includes inherited globals, so path validation and schema building
@@ -135,10 +183,11 @@ pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
             );
         }
 
-        // Extract flag matchers from the claimed selector (if any).
+        // Extract flag matchers and middleware from the claimed selector (if any).
         let local_flag: Option<&FlagMatcher> = matched_selector.and_then(|s| s.local_flag.as_ref());
         let inherited_flag: Option<&FlagMatcher> =
             matched_selector.and_then(|s| s.inherited_flag.as_ref());
+        let middleware: Option<Middleware> = matched_selector.and_then(|s| s.middleware.clone());
 
         let input_schema = crate::schema::build_input_schema_with_matchers(
             entry.cmd,
@@ -158,7 +207,11 @@ pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
         let mut tool = Tool::new(tool_name, description, input_schema);
         tool.output_schema = Some(output_schema);
         tool.annotations = annotations;
-        tools.push(tool);
+        tools.push(ResolvedTool {
+            tool,
+            middleware,
+            command_path: entry.path.clone(),
+        });
     }
 
     Ok(tools)
