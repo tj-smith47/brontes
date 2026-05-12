@@ -124,7 +124,6 @@ fn run_disable(matches: &ArgMatches) -> Result<()> {
 fn run_list(matches: &ArgMatches) -> Result<()> {
     let path = resolve_config_path(matches);
     let manager: Manager<ClaudeConfig> = Manager::load(path)?;
-    println!("Claude Desktop MCP servers:");
     manager.print();
     Ok(())
 }

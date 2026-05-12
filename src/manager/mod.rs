@@ -91,7 +91,11 @@ impl<C: EditorConfig> Manager<C> {
     /// Read the editor config from `path`. A missing file yields
     /// [`C::default()`](Default::default); other I/O or JSON-parse failures
     /// surface as [`Error::EditorConfigRead`] or [`Error::EditorConfigParse`].
+    ///
+    /// Emits `Using config path "<path>"` to stdout on every call (ophis
+    /// `manager.go:114` parity).
     pub(crate) fn load(path: PathBuf) -> Result<Self> {
+        println!("Using config path \"{}\"", path.display());
         let exists = path.exists();
         if !exists {
             return Ok(Self {
@@ -146,10 +150,15 @@ impl<C: EditorConfig> Manager<C> {
     /// No-op when the primary file does not yet exist (first write on a
     /// fresh machine). Failure returns [`Error::EditorConfigBackup`] and
     /// the caller's `save()` aborts before writing the new bytes.
+    ///
+    /// Emits `Backing up config file at "<path>"` to stdout before copying,
+    /// only when the source file actually exists (ophis `manager.go:166`
+    /// parity). No notice is printed when the file is absent (no-op path).
     fn backup(&self) -> Result<()> {
         if !self.path.exists() {
             return Ok(());
         }
+        println!("Backing up config file at \"{}\"", self.path.display());
         let dest = backup_path(&self.path);
         std::fs::copy(&self.path, &dest).map_err(|e| Error::EditorConfigBackup {
             path: dest,

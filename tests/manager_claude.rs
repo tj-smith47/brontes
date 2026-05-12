@@ -435,3 +435,54 @@ fn enable_rejects_malformed_env_flag() {
         "config must NOT be written on env-flag rejection"
     );
 }
+
+/// Asserts that a single `enable` flow writes both the current-exe path as
+/// `command` AND the supplied `--env` key/value pairs into the same server
+/// entry (spec check #10 / Task #4 I1).
+///
+/// `std::env::current_exe()` inside a `cargo test` run points at the test
+/// binary rather than the shipping `brontes` binary; that is expected. The
+/// test asserts the written value equals `current_exe()` (same process, same
+/// binary) and is non-empty, which validates the wiring without being fragile
+/// about the binary name.
+#[test]
+fn enable_writes_current_exe_and_env_in_single_flow() {
+    let dir = TempDir::new().expect("tempdir");
+    let cfg_path = dir.path().join("claude_desktop_config.json");
+
+    dispatch(&[
+        "mcp",
+        "claude",
+        "enable",
+        "--config-path",
+        cfg_path.to_str().unwrap(),
+        "--server-name",
+        "brontes-test",
+        "--env",
+        "KEY=VAL",
+        "--env",
+        "OTHER=2",
+    ])
+    .expect("enable succeeds");
+
+    let doc = read_json(&cfg_path);
+    let server = &doc["mcpServers"]["brontes-test"];
+    assert!(server.is_object(), "brontes-test entry must exist");
+
+    // command must match current_exe (same test binary process).
+    let written_cmd = server["command"]
+        .as_str()
+        .expect("command must be a string");
+    let exe = std::env::current_exe().expect("current_exe");
+    assert_eq!(
+        written_cmd,
+        exe.to_string_lossy().as_ref(),
+        "command must equal current_exe()"
+    );
+    assert!(!written_cmd.is_empty(), "command must be non-empty");
+
+    // Both env entries must be present in the same entry.
+    let env = &server["env"];
+    assert_eq!(env["KEY"].as_str(), Some("VAL"), "KEY env var must be VAL");
+    assert_eq!(env["OTHER"].as_str(), Some("2"), "OTHER env var must be 2");
+}
