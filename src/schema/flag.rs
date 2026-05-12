@@ -66,8 +66,11 @@ pub(crate) fn build_flags_schema(
 
 /// Process a single [`Arg`], inserting into `properties` and `required`.
 ///
-/// Skips hidden args. Applies a wholesale `flag_schemas` override when
-/// present; otherwise auto-extracts type, description, defaults, and enum.
+/// Skips hidden args, clap's auto-injected `help` / `version` ids, and
+/// positional args (those have neither `long` nor `short` set, and surface
+/// through `properties.args` instead). Applies a wholesale `flag_schemas`
+/// override when present; otherwise auto-extracts type, description,
+/// defaults, and enum.
 fn process_arg(
     arg: &Arg,
     cfg: &Config,
@@ -76,6 +79,23 @@ fn process_arg(
     required: &mut Vec<String>,
 ) {
     if arg.is_hide_set() {
+        return;
+    }
+
+    // clap auto-injects `--help` on every command and `--version` on the
+    // root when `Command::version(...)` is set. Those are runtime-only
+    // behaviors of the CLI, not part of the tool surface contract; the MCP
+    // client never invokes them via the tool call. Filter them out.
+    let id = arg.get_id().as_str();
+    if id == "help" || id == "version" {
+        return;
+    }
+
+    // Positional args (no `long` and no `short`) belong in
+    // `properties.args` — the string-array positional surface — not in
+    // `properties.flags.properties.<name>`. Skip them here so they only
+    // appear once, via `args_description`.
+    if arg.is_positional() {
         return;
     }
 

@@ -9,10 +9,12 @@
 //!   100 leaf tools (the group-only root is filtered).
 //! - **No-args leaf** — a leaf with no positionals and no user-defined flags
 //!   still has a per-tool input schema whose `flags.properties` map exists,
-//!   carrying only clap's auto-injected `help` flag.
+//!   and is empty: clap's auto-injected `--help` is filtered from the tool
+//!   surface per the v0.1.0 contract.
 //! - **Positional-only leaf** — a leaf with one required positional surfaces
-//!   in both `args.description` (as a `Usage pattern:` line) and in
-//!   `flags.required` (clap's `Arg` instances flow through the same map).
+//!   ONLY in `args.description` (as a `Usage pattern:` line). Positional
+//!   args are intentionally absent from `flags.properties` and
+//!   `flags.required`; they flow through `properties.args` alone.
 //! - **Empty-string prefix fallback** — `Config::tool_name_prefix("")` does
 //!   not produce names starting with `_`; the empty override falls back to
 //!   the root command name.
@@ -96,10 +98,10 @@ fn wide_flat_tree_renders_all_tools() {
 #[test]
 fn no_args_command_has_empty_flags_schema() {
     // `bare` has no positionals and no user-defined flags. The group-only
-    // root is filtered. clap auto-injects a `--help` flag, which brontes
-    // surfaces in the schema verbatim — pin THAT (not a guessed "no help"
-    // shape), so a future change that adds or removes help filtering shows
-    // up here.
+    // root is filtered. clap auto-injects a `--help` flag on every command,
+    // but brontes filters `help` (and `version`) from the tool surface —
+    // those are runtime CLI behaviors, not part of the MCP tool contract.
+    // The expected `flags.properties` shape is therefore the empty object.
     let root = Command::new("noargs")
         .subcommand_required(true)
         .subcommand(Command::new("bare"));
@@ -123,14 +125,14 @@ fn no_args_command_has_empty_flags_schema() {
         .and_then(serde_json::Value::as_object)
         .expect("flags.properties must be an object for a no-args leaf");
 
-    // Pin reality: the only entry is clap's auto-injected `help`. No
-    // user-defined flag and no `version` (version is root-only and the
-    // root is filtered).
+    // Pin reality: the map is empty. `help` is filtered (auto-injected by
+    // clap on every command, excluded from the tool surface). `version`
+    // would be filtered too, but it's root-only and the root itself is
+    // filtered as group-only.
     let keys: Vec<&str> = flags_props.keys().map(String::as_str).collect();
-    assert_eq!(
-        keys,
-        vec!["help"],
-        "no-args leaf must expose exactly one auto-injected `help` flag, got: {keys:?}"
+    assert!(
+        keys.is_empty(),
+        "no-args leaf must expose an empty flags.properties map (clap's `help` filtered), got: {keys:?}"
     );
 
     // The flags object itself must remain `additionalProperties: false` so
@@ -155,17 +157,13 @@ fn no_args_command_has_empty_flags_schema() {
 
 #[test]
 fn positional_only_command_renders_args_schema() {
-    // `touch` has one required positional `path` and no flags. The group-only
-    // root is filtered. Pin two surfaces:
-    //
-    // (a) args.description includes a `Usage pattern: <path>` line, proving
-    //     positional metadata flows through `schema::args::args_description`.
-    // (b) flags.required contains `path` — clap exposes positional args
-    //     through `Command::get_arguments()`, so brontes's per-arg loop in
-    //     `schema::flag::build_flags_schema` picks them up. This is part of
-    //     the actual contract; the test pins it so a future split (positional
-    //     args → args-only schema, flags → flags-only schema) shows up here
-    //     as an intentional change.
+    // `touch` has one required positional `path` and no flags. The
+    // group-only root is filtered. Pin the contract: positionals appear in
+    // `properties.args` (via `args_description`) and nowhere else —
+    // `properties.flags.properties` and `properties.flags.required` MUST
+    // NOT carry `path`. clap exposes positionals through
+    // `Command::get_arguments()`, but the per-flag schema loop filters
+    // `Arg::is_positional()` so positionals surface exactly once.
     let root = Command::new("posonly")
         .subcommand_required(true)
         .subcommand(Command::new("touch").arg(Arg::new("path").required(true)));
@@ -213,8 +211,9 @@ fn positional_only_command_renders_args_schema() {
         "args.items.type must be string"
     );
 
-    // (b) `path` is required → it shows up in flags.required (where clap's
-    // positional Args surface through brontes's per-arg loop).
+    // (b) `path` must NOT appear in flags — neither in `flags.properties`
+    // (where the per-flag schema lives) nor in `flags.required`. Positionals
+    // belong to `properties.args` alone.
     let flags_obj = touch
         .input_schema
         .get("properties")
@@ -222,17 +221,22 @@ fn positional_only_command_renders_args_schema() {
         .and_then(|p| p.get("flags"))
         .and_then(serde_json::Value::as_object)
         .expect("properties.flags must be an object");
-    let required = flags_obj
-        .get("required")
-        .and_then(serde_json::Value::as_array)
-        .expect("flags.required must be an array for a required positional");
-    let required_strs: Vec<&str> = required
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .collect();
+    let flags_props = flags_obj
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .expect("flags.properties must be an object");
     assert!(
-        required_strs.contains(&"path"),
-        "required positional `path` must appear in flags.required, got: {required_strs:?}"
+        !flags_props.contains_key("path"),
+        "positional `path` must NOT appear in flags.properties, got keys: {:?}",
+        flags_props.keys().collect::<Vec<_>>()
+    );
+    // `flags.required` is only emitted when at least one flag is required.
+    // With `path` filtered (and no other flags), the key must be absent
+    // entirely — emitting `required: []` would be a regression.
+    assert!(
+        flags_obj.get("required").is_none(),
+        "flags.required must be absent when no flags are required, got: {:?}",
+        flags_obj.get("required")
     );
 }
 
