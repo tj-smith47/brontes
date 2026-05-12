@@ -24,7 +24,6 @@ use clap::Command;
 /// Positional command line arguments
 /// Usage pattern: <name> <path>
 /// ```
-#[allow(dead_code)]
 pub(crate) fn args_description(cmd: &Command) -> String {
     let mut description = String::from("Positional command line arguments");
 

@@ -66,10 +66,6 @@ pub(crate) enum MatcherKind {
 }
 
 /// Captured constructor arguments for a built-in matcher.
-// MatcherSpec is consumed by the path-validator in generate_tools.
-// Pre-validator, only the registration side is exercised — the
-// allow(dead_code) lifts when the validator wires up.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct MatcherSpec {
     /// Which factory produced this matcher.
@@ -108,9 +104,6 @@ fn register<T: ?Sized>(arc: &Arc<T>, spec: MatcherSpec) {
 ///
 /// Returns `None` for matchers that were not produced by the built-in
 /// factories (e.g., hand-written closures).
-// Consumed by the path validator in generate_tools. Pre-validator, the
-// function is referenced only by the per-factory registration tests.
-#[allow(dead_code)]
 pub(crate) fn lookup<T: ?Sized>(arc: &Arc<T>) -> Option<MatcherSpec> {
     let key = Arc::as_ptr(arc).cast::<()>() as usize;
     MATCHER_REGISTRY

@@ -28,8 +28,14 @@ use rmcp::model::JsonObject;
 use serde_json::Value;
 
 use crate::config::Config;
+use crate::selector::FlagMatcher;
 
-/// Build the per-tool input schema for `cmd`.
+/// Build the per-tool input schema for `cmd`, applying optional selector
+/// flag matchers.
+///
+/// `local_flag` and `inherited_flag` are sourced from the selector that
+/// claimed this command in the first-match-wins evaluation; pass `None`
+/// when no selector is active (which includes all flags).
 ///
 /// The base schema (derived from `ToolInput`'s `JsonSchema` impl) is cloned;
 /// the `flags` and `args` property objects are then populated with per-flag
@@ -37,14 +43,19 @@ use crate::config::Config;
 ///
 /// The returned `JsonObject` is wrapped in [`Arc`] for direct assignment to
 /// `rmcp::model::Tool::input_schema`.
-// `generate_tools` (Task 13) will be the first external consumer.
-#[allow(dead_code)]
-pub(crate) fn build_input_schema(cmd: &Command, cfg: &Config, cmd_path: &str) -> Arc<JsonObject> {
+pub(crate) fn build_input_schema_with_matchers(
+    cmd: &Command,
+    cfg: &Config,
+    cmd_path: &str,
+    local_flag: Option<&FlagMatcher>,
+    inherited_flag: Option<&FlagMatcher>,
+) -> Arc<JsonObject> {
     let mut schema = cache::fresh_tool_input_schema();
 
     if let Some(Value::Object(properties_root)) = schema.get_mut("properties") {
         if let Some(Value::Object(flags_obj)) = properties_root.get_mut("flags") {
-            let (properties, required) = flag::build_flags_schema(cmd, cfg, cmd_path);
+            let (properties, required) =
+                flag::build_flags_schema(cmd, cfg, cmd_path, local_flag, inherited_flag);
 
             // Replace the schemars-emitted generic shape with brontes's
             // per-flag concrete object.  `additionalProperties: false` means
@@ -73,13 +84,22 @@ pub(crate) fn build_input_schema(cmd: &Command, cfg: &Config, cmd_path: &str) ->
     Arc::new(schema)
 }
 
+/// Build the per-tool input schema for `cmd` with no flag filtering.
+///
+/// Convenience wrapper over [`build_input_schema_with_matchers`] that passes
+/// `None` for both flag matchers, including all flags.
+// Only called from tests in this module; the non-test path goes through
+// build_input_schema_with_matchers directly.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn build_input_schema(cmd: &Command, cfg: &Config, cmd_path: &str) -> Arc<JsonObject> {
+    build_input_schema_with_matchers(cmd, cfg, cmd_path, None, None)
+}
+
 /// Build the per-tool output schema.
 ///
 /// The `ToolOutput` shape (`stdout` / `stderr` / `exit_code`) does not vary
 /// per command; this function shares the single cached [`Arc`] allocation
 /// across every tool (via `Arc::clone`), rather than allocating fresh.
-// `generate_tools` (Task 13) will be the first external consumer.
-#[allow(dead_code)]
 pub(crate) fn build_output_schema() -> Arc<JsonObject> {
     // Output shape is invariant per tool — share the single cached
     // Arc allocation across every Tool's output_schema field.
@@ -95,8 +115,6 @@ pub(crate) fn build_output_schema() -> Arc<JsonObject> {
 ///
 /// If `cmd.get_after_help()` is set and non-empty, a blank line followed by
 /// `"Examples:"` and the after-help text is appended to the description.
-// `generate_tools` (Task 13) will be the first external consumer.
-#[allow(dead_code)]
 pub(crate) fn build_description(cmd: &Command) -> String {
     let name = cmd.get_name();
     let main = cmd

@@ -13,8 +13,7 @@ use crate::config::Config;
 /// A clap command with the path brontes derives by walking from the root.
 ///
 /// Consumed by `generate_tools` to apply selectors and assemble the MCP tool
-/// list; the allow lifts when that wiring lands.
-#[allow(dead_code)]
+/// list.
 #[derive(Debug)]
 pub(crate) struct ResolvedCmd<'a> {
     /// The clap command this entry refers to.
@@ -22,6 +21,7 @@ pub(crate) struct ResolvedCmd<'a> {
     /// Space-joined path from the root command (e.g. `"my-cli mcp claude enable"`).
     pub path: String,
     /// Path components in order (e.g. `["my-cli", "mcp", "claude", "enable"]`).
+    #[allow(dead_code)]
     pub parts: Vec<&'a str>,
 }
 
@@ -30,7 +30,6 @@ pub(crate) struct ResolvedCmd<'a> {
 ///
 /// Subcommands are visited in reverse registration order (the iterative DFS
 /// pushes them onto a stack and pops). Order is deterministic across runs.
-#[allow(dead_code)]
 pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
     let mut out = Vec::new();
     let mut stack: Vec<(&Command, Vec<&str>)> = vec![(root, vec![root.get_name()])];
@@ -48,10 +47,6 @@ pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
 
 /// Per the filter order: hidden → deprecated → group-only → substring.
 /// Returns `true` if `cmd` should be EXCLUDED from the tool list.
-///
-/// Consumed by `generate_tools` to apply selectors and assemble the MCP tool list;
-/// the allow lifts when that wiring lands.
-#[allow(dead_code)]
 pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
     // 1. Hidden commands are never exposed as tools.
     if cmd.is_hide_set() {
@@ -91,10 +86,6 @@ pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
 /// A group-only command requires a subcommand AND defines no user-facing
 /// arguments. clap auto-injects `--help` (and `--version` on the root when
 /// `Command::version` is set); those ids are excluded from the count.
-///
-/// Consumed by `should_filter` to identify navigation-only nodes; the allow lifts
-/// when the filter is fully wired into `generate_tools`.
-#[allow(dead_code)]
 fn is_group_only(cmd: &Command) -> bool {
     let requires_sub = cmd.is_subcommand_required_set();
     let user_args_count = cmd

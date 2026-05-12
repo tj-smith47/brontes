@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::config::Config;
 use crate::schema::types::{SchemaType, known_type_classifications};
+use crate::selector::FlagMatcher;
 
 /// Walk `cmd`'s args (local first, inherited second; dedup by id) and
 /// build a `(properties_map, required_list)` ready to splice into the
@@ -18,12 +19,17 @@ use crate::schema::types::{SchemaType, known_type_classifications};
 ///
 /// Hidden args are skipped. Args matching a key in `cfg.flag_schemas`
 /// use the user-supplied override wholesale and skip the auto extraction.
-// Task 11 (per-tool orchestrator) will be the first external consumer.
-#[allow(dead_code)]
+///
+/// `local_flag` and `inherited_flag` are optional [`FlagMatcher`] closures
+/// sourced from the first-match-wins selector that claimed this command.
+/// When `Some`, each arg is passed to the matcher before inclusion; `false`
+/// means the flag is omitted from the schema.  When `None` all flags pass.
 pub(crate) fn build_flags_schema(
     cmd: &Command,
     cfg: &Config,
     cmd_path: &str,
+    local_flag: Option<&FlagMatcher>,
+    inherited_flag: Option<&FlagMatcher>,
 ) -> (Map<String, Value>, Vec<String>) {
     let mut properties: Map<String, Value> = Map::new();
     let mut required: Vec<String> = Vec::new();
@@ -37,6 +43,9 @@ pub(crate) fn build_flags_schema(
 
     // Process local args first.
     for arg in cmd.get_arguments().filter(|a| !a.is_global_set()) {
+        if local_flag.is_some_and(|m| !m(arg)) {
+            continue;
+        }
         process_arg(arg, cfg, cmd_path, &mut properties, &mut required);
     }
 
@@ -45,6 +54,9 @@ pub(crate) fn build_flags_schema(
     for arg in cmd.get_arguments().filter(|a| a.is_global_set()) {
         if local_ids.contains(arg.get_id().as_str()) {
             continue; // local won
+        }
+        if inherited_flag.is_some_and(|m| !m(arg)) {
+            continue;
         }
         process_arg(arg, cfg, cmd_path, &mut properties, &mut required);
     }
@@ -56,7 +68,6 @@ pub(crate) fn build_flags_schema(
 ///
 /// Skips hidden args. Applies a wholesale `flag_schemas` override when
 /// present; otherwise auto-extracts type, description, defaults, and enum.
-#[allow(dead_code)]
 fn process_arg(
     arg: &Arg,
     cfg: &Config,
@@ -89,7 +100,6 @@ fn process_arg(
 }
 
 /// Build the JSON Schema object for a single arg via auto-extraction.
-#[allow(dead_code)]
 fn build_arg_schema(arg: &Arg, cfg: &Config, cmd_path: &str) -> Map<String, Value> {
     let mut prop: Map<String, Value> = Map::new();
 
@@ -162,7 +172,6 @@ fn build_arg_schema(arg: &Arg, cfg: &Config, cmd_path: &str) -> Map<String, Valu
 ///    `Append` → Array.
 /// 3. `value_parser` type id via [`known_type_classifications`].
 /// 4. Fallback to `String`, emitting a `tracing::debug!`.
-#[allow(dead_code)]
 fn classify(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
     let name = arg.get_id().as_str();
 
@@ -191,7 +200,6 @@ fn classify(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
 /// The action itself signals "Array"; this function resolves the scalar
 /// element type using the same value-parser lookup used by [`classify`],
 /// but without the action-based shortcut.
-#[allow(dead_code)]
 fn classify_array_item(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
     let name = arg.get_id().as_str();
 
@@ -218,7 +226,6 @@ fn classify_array_item(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
 /// Walks [`known_type_classifications`] comparing each entry's [`TypeId`]
 /// against the arg's `AnyValueId` via `PartialEq<TypeId>` — no macro
 /// needed, and no duplicate table to maintain.
-#[allow(dead_code)]
 fn classify_by_type_id(arg: &Arg, cmd_path: &str) -> SchemaType {
     let parser_id = arg.get_value_parser().type_id();
 
@@ -245,7 +252,6 @@ fn classify_by_type_id(arg: &Arg, cmd_path: &str) -> SchemaType {
 /// - `Count` → number (0 when no parseable default is present).
 /// - Single default → string.
 /// - Multiple defaults → array of strings.
-#[allow(dead_code)]
 fn encode_defaults(arg: &Arg, defaults: &[String]) -> Value {
     match arg.get_action() {
         ArgAction::SetTrue => Value::Bool(true),
@@ -282,7 +288,7 @@ mod tests {
     /// Build a single-command fixture and call `build_flags_schema`.
     fn schema_for(cmd: &Command) -> (Map<String, Value>, Vec<String>) {
         let cfg = Config::default();
-        build_flags_schema(cmd, &cfg, "my-cli")
+        build_flags_schema(cmd, &cfg, "my-cli", None, None)
     }
 
     fn cmd_with_arg(arg: Arg) -> Command {
@@ -452,7 +458,7 @@ mod tests {
             .expect("sub command");
 
         let cfg = Config::default();
-        let (props, _) = build_flags_schema(sub, &cfg, "my-cli sub");
+        let (props, _) = build_flags_schema(sub, &cfg, "my-cli sub", None, None);
 
         let prop = props.get("log-level").expect("log-level in props");
         assert_eq!(
@@ -476,7 +482,7 @@ mod tests {
                 .value_parser(value_parser!(String)), // would auto-extract as string
         );
 
-        let (props, _) = build_flags_schema(&cmd, &cfg, "my-cli");
+        let (props, _) = build_flags_schema(&cmd, &cfg, "my-cli", None, None);
         let prop = props.get("limit").expect("limit in props");
         assert_eq!(
             *prop,
@@ -505,7 +511,7 @@ mod tests {
                 .value_parser(value_parser!(String)),
         );
 
-        let (props, _) = build_flags_schema(&cmd, &cfg, "my-cli");
+        let (props, _) = build_flags_schema(&cmd, &cfg, "my-cli", None, None);
         let prop = props.get("tags").expect("tags in props");
         assert_eq!(
             prop["type"],

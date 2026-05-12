@@ -4,11 +4,19 @@
 //! [MCP](https://modelcontextprotocol.io) tool, and ships editor-config helpers
 //! for Claude Desktop, `VSCode`, and Cursor.
 //!
-//! # Status
+//! # Quick start
 //!
-//! Early development. The public surface currently exports the crate's
-//! [`Error`] and [`Result`] types. The MCP tool-generation surface and
-//! the `mcp` subcommand tree are not yet exposed.
+//! ```rust
+//! use clap::Command;
+//! use brontes::Config;
+//!
+//! let root = Command::new("myapp")
+//!     .subcommand(Command::new("deploy").about("Deploy the app"));
+//!
+//! let tools = brontes::generate_tools(&root, &Config::default())
+//!     .expect("valid config");
+//! // `tools` is a Vec<rmcp::model::Tool> ready to register with a server.
+//! ```
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -17,6 +25,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 mod annotations;
+mod command;
 mod config;
 mod error;
 mod schema;
@@ -26,6 +35,7 @@ mod tool;
 mod walk;
 
 pub use annotations::ToolAnnotations;
+pub use command::generate_tools;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use schema::SchemaType;
