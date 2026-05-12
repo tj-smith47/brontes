@@ -134,6 +134,119 @@ fn enable_field_order_is_type_command_args_env() {
 }
 
 #[test]
+fn round_trip_preserves_full_six_field_order_type_command_args_env_url_headers() {
+    // Spec check #7c: assert all six CursorServer fields preserve declaration
+    // order on round-trip. `enable` only writes type/command/args/env, so we
+    // seed a fixture that already contains url/headers, run `enable` on a
+    // different server name (which triggers a full read-modify-write of the
+    // file), then verify the preserved server's serialized bytes have all six
+    // fields in the canonical order.
+    let dir = TempDir::new().expect("tempdir");
+    let cfg_path = dir.path().join("mcp.json");
+
+    let seed = serde_json::json!({
+        "mcpServers": {
+            "remote": {
+                "type": "sse",
+                "command": "ignored-for-sse",
+                "args": ["--unused"],
+                "env": { "K": "V" },
+                "url": "https://example.test/mcp",
+                "headers": { "Authorization": "Bearer abc" }
+            }
+        }
+    });
+    std::fs::write(&cfg_path, serde_json::to_vec_pretty(&seed).unwrap()).expect("seed");
+
+    dispatch(&[
+        "mcp",
+        "cursor",
+        "enable",
+        "--config-path",
+        cfg_path.to_str().unwrap(),
+        "--server-name",
+        "new-stdio",
+    ])
+    .expect("enable second server");
+
+    let raw = std::fs::read_to_string(&cfg_path).expect("read");
+
+    // First, parse-and-verify the preserved fields are present (the on-disk
+    // text contains nested objects like env: {...}, so a naive find('}') would
+    // truncate before url/headers).
+    let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+    let remote = &parsed["mcpServers"]["remote"];
+    assert_eq!(remote["type"].as_str(), Some("sse"), "type preserved");
+    assert_eq!(
+        remote["url"].as_str(),
+        Some("https://example.test/mcp"),
+        "url preserved in {raw}"
+    );
+    assert_eq!(
+        remote["headers"]["Authorization"].as_str(),
+        Some("Bearer abc"),
+        "headers preserved in {raw}"
+    );
+
+    // Now verify on-disk byte ordering of all six keys. Walk the raw text
+    // with a balanced-brace counter so the nested `env: {...}` doesn't
+    // truncate the slice.
+    let server_start = raw.find(r#""remote""#).expect("remote key");
+    let after = &raw[server_start..];
+    let body_start = after.find('{').expect("body open");
+    let body_end_offset = balanced_object_end(&after[body_start..]).expect("balanced body close");
+    let body = &after[body_start..=body_start + body_end_offset];
+
+    let pos = |k: &str| {
+        body.find(k)
+            .unwrap_or_else(|| panic!("{k} missing in body={body}"))
+    };
+    let p_type = pos(r#""type""#);
+    let p_command = pos(r#""command""#);
+    let p_args = pos(r#""args""#);
+    let p_env = pos(r#""env""#);
+    let p_url = pos(r#""url""#);
+    let p_headers = pos(r#""headers""#);
+
+    assert!(p_type < p_command, "type < command failed in {body}");
+    assert!(p_command < p_args, "command < args failed in {body}");
+    assert!(p_args < p_env, "args < env failed in {body}");
+    assert!(p_env < p_url, "env < url failed in {body}");
+    assert!(p_url < p_headers, "url < headers failed in {body}");
+}
+
+/// Given a slice that starts with `{`, return the byte offset of the matching
+/// `}`. Counts nested braces (and is string-literal-aware) so a body
+/// containing nested objects isn't truncated at the inner close. Used by the
+/// six-field-order golden test.
+fn balanced_object_end(slice: &str) -> Option<usize> {
+    let bytes = slice.as_bytes();
+    debug_assert_eq!(bytes[0], b'{');
+    let mut depth: u32 = 0;
+    let mut in_str = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match b {
+            b'\\' if in_str => escaped = true,
+            b'"' => in_str = !in_str,
+            b'{' if !in_str => depth += 1,
+            b'}' if !in_str => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[test]
 fn enable_includes_log_level_in_args() {
     let dir = TempDir::new().expect("tempdir");
     let cfg_path = dir.path().join("mcp.json");
