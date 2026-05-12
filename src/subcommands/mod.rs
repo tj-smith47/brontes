@@ -7,7 +7,9 @@
 //! mcp
 //! ├── start       — serve MCP over stdio
 //! ├── tools       — export the tool list to ./mcp-tools.json
-//! └── stream      — serve MCP over streamable HTTP
+//! ├── stream      — serve MCP over streamable HTTP
+//! ├── claude      — manage Claude Desktop MCP servers
+//! └── cursor      — manage Cursor MCP servers (user + workspace)
 //! ```
 //!
 //! Plus a hidden internal marker subcommand (`MARKER_NAME`) that lets
@@ -48,6 +50,7 @@ pub(crate) fn build(command_name: &str) -> Command {
         .subcommand(tools::build())
         .subcommand(stream::build())
         .subcommand(editor::claude::build())
+        .subcommand(editor::cursor::build())
         .subcommand(
             // Hidden marker; carries no flags and is never meant to be run.
             // Used purely so `handle()` can fingerprint the group as ours.

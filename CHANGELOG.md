@@ -56,6 +56,20 @@ All notable changes to this project are documented here. Format adapted from [Ke
   `--host` binds `0.0.0.0` (Go-parity); the startup log line matches
   ophis verbatim. Signal-driven cancellation (SIGINT/SIGTERM on Unix,
   Ctrl+C on Windows) with a 5-second graceful-drain window.
+- `mcp claude {enable, disable, list}` — manage Claude Desktop's
+  `claude_desktop_config.json` with `--config-path`, `--server-name`,
+  `--env` (repeatable `-e KEY=VAL`), and `--log-level`. Per-OS path
+  resolution (macOS `~/Library/Application Support/Claude/...`, Linux
+  `$XDG_CONFIG_HOME` or `~/.config/Claude/...`, Windows
+  `%APPDATA%\Claude\...`). Backup-before-write semantics: the existing
+  file is copied to `<base>.backup.json` before any save.
+- `mcp cursor {enable, disable, list}` — manage Cursor's `mcp.json`
+  with the same flags as `claude` plus `--workspace` accepted on all
+  three leaves. Without `--workspace` the path is per-OS user-mode
+  (`~/.cursor/mcp.json`); with `--workspace` the target is
+  `$CWD/.cursor/mcp.json`. JSON shape carries the VSCode-compatible
+  `type/command/args/env/url/headers` server fields and an optional
+  `inputs[]` array preserved on round-trip.
 
 ### Notes
 

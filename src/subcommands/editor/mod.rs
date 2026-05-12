@@ -22,6 +22,7 @@
 //! beside [`claude`] using the same helpers — see PLAN.md §3 module layout.
 
 pub(crate) mod claude;
+pub(crate) mod cursor;
 
 use std::collections::BTreeMap;
 

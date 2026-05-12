@@ -31,11 +31,44 @@
 //! for the golden round-trip parity tests against ophis.
 
 pub(crate) mod claude;
+pub(crate) mod cursor;
 pub(crate) mod paths;
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{Error, Result};
+
+/// Shared `inputs[]` entry shape carried by `VSCode` and Cursor configs.
+///
+/// Mirrors ophis `internal/cfgmgr/manager/vscode/config.go:11-17` and
+/// `cursor/config.go:11-17`. brontes never **constructs** an `Input` — the
+/// `enable` flow only ever writes to the server map — but `VSCode` and Cursor
+/// user configs in the wild routinely carry `inputs[]` entries (prompts for
+/// API keys, env-var-shaped inputs, etc.), and a read-mutate-write round trip
+/// must preserve them verbatim or the editor's UI loses its configured
+/// prompts on the next save.
+///
+/// Lives in the shared `manager` module (not in `cursor.rs` / `vscode.rs`)
+/// so Task #6 reuses the same struct without duplication. The round-trip
+/// golden test asserts both `password: true` and `password: false` entries
+/// survive the load-mutate-write cycle.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub(crate) struct Input {
+    /// The input kind tag (e.g. `"promptString"`). ophis Go field `Type`.
+    #[serde(rename = "type")]
+    pub(crate) kind: String,
+    /// Stable identifier referenced by `${input:<id>}` in server entries.
+    pub(crate) id: String,
+    /// Human-readable prompt shown by the editor when collecting the value.
+    pub(crate) description: String,
+    /// Whether the editor should mask the input as a secret. Defaults to
+    /// `false`; omitted from the JSON on write when `false` (`omitempty`
+    /// parity with ophis Go's `bool` field).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) password: bool,
+}
 
 /// The on-disk shape of an editor's MCP configuration file.
 ///

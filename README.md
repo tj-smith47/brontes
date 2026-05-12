@@ -44,7 +44,10 @@ async fn main() -> brontes::Result<()> {
 - `brontes::command(cfg)` / `brontes::handle(matches, cli, cfg)` /
   `brontes::run(cli, cfg)` — mount, dispatch, and one-shot runners for the
   `mcp` subtree (`mcp start` for stdio, `mcp stream --host <H> --port <P>`
-  for streamable HTTP, `mcp tools` to export the tool list).
+  for streamable HTTP, `mcp tools` to export the tool list,
+  `mcp claude {enable,disable,list}` to manage Claude Desktop's
+  MCP server config, and `mcp cursor {enable,disable,list}` with
+  `--workspace` to manage Cursor's user or workspace `mcp.json`).
 
   `mcp stream` flags:
 

@@ -147,6 +147,119 @@ fn claude_config_path_windows_from(appdata: Option<&str>, userprofile: Option<&s
         .join("claude_desktop_config.json")
 }
 
+/// Default Cursor user-mode `mcp.json` path for the current platform.
+///
+/// macOS: `$HOME_DIR/.cursor/mcp.json`, falling back to
+/// `/Users/$USER/.cursor/mcp.json` when `dirs::home_dir()` returns `None`.
+///
+/// Linux: `$HOME_DIR/.cursor/mcp.json`, falling back to
+/// `/home/$USER/.cursor/mcp.json` when home is unresolved. Cursor on Linux
+/// does NOT consult `XDG_CONFIG_HOME` — that's Claude-only behavior per
+/// PLAN line 313.
+///
+/// Windows: `$HOME_DIR/.cursor/mcp.json` (where `$HOME_DIR` is `dirs::home_dir`,
+/// which on Windows resolves `%USERPROFILE%`), falling back to
+/// `$USERPROFILE\.cursor\mcp.json` from a direct env read when home is
+/// unresolved.
+#[must_use]
+pub(crate) fn cursor_config_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir();
+        let user = std::env::var("USER").unwrap_or_default();
+        cursor_config_path_macos_from(home.as_deref(), &user)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let home = dirs::home_dir();
+        let user = std::env::var("USER").unwrap_or_default();
+        cursor_config_path_linux_from(home.as_deref(), &user)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let home = dirs::home_dir();
+        let userprofile = std::env::var("USERPROFILE").ok();
+        cursor_config_path_windows_from(home.as_deref(), userprofile.as_deref())
+    }
+    // Fallback for non-tier-1 targets (BSD, illumos, etc.): treat as Linux.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let home = dirs::home_dir();
+        let user = std::env::var("USER").unwrap_or_default();
+        cursor_config_path_linux_from(home.as_deref(), &user)
+    }
+}
+
+/// Cursor workspace-mode `mcp.json` path: `$CWD/.cursor/mcp.json`, falling
+/// back to the relative `.cursor/mcp.json` when `std::env::current_dir()`
+/// fails (matches ophis behavior per PLAN line 582).
+#[must_use]
+pub(crate) fn cursor_workspace_path() -> PathBuf {
+    cursor_workspace_path_from(std::env::current_dir().ok().as_deref())
+}
+
+/// Pure macOS resolver for Cursor user-mode. `home` is `Some` when
+/// `dirs::home_dir()` resolves; `user` is `$USER` for the home-unresolved
+/// branch.
+#[cfg(any(target_os = "macos", test))]
+fn cursor_config_path_macos_from(home: Option<&std::path::Path>, user: &str) -> PathBuf {
+    if let Some(home) = home {
+        return home.join(".cursor").join("mcp.json");
+    }
+    PathBuf::from("/Users")
+        .join(user)
+        .join(".cursor")
+        .join("mcp.json")
+}
+
+/// Pure Linux resolver for Cursor user-mode. `home` is `Some` when
+/// `dirs::home_dir()` resolves; `user` is `$USER` for the home-unresolved
+/// branch. Cursor on Linux does NOT consult `XDG_CONFIG_HOME` (PLAN line 313).
+#[cfg(any(
+    target_os = "linux",
+    not(any(target_os = "macos", target_os = "windows")),
+    test
+))]
+fn cursor_config_path_linux_from(home: Option<&std::path::Path>, user: &str) -> PathBuf {
+    if let Some(home) = home {
+        return home.join(".cursor").join("mcp.json");
+    }
+    PathBuf::from("/home")
+        .join(user)
+        .join(".cursor")
+        .join("mcp.json")
+}
+
+/// Pure Windows resolver for Cursor user-mode. `home` is `Some` when
+/// `dirs::home_dir()` resolves; `userprofile` is `$USERPROFILE` for the
+/// home-unresolved branch.
+#[cfg(any(target_os = "windows", test))]
+fn cursor_config_path_windows_from(
+    home: Option<&std::path::Path>,
+    userprofile: Option<&str>,
+) -> PathBuf {
+    if let Some(home) = home {
+        return home.join(".cursor").join("mcp.json");
+    }
+    if let Some(v) = userprofile.filter(|s| !s.is_empty()) {
+        return PathBuf::from(v).join(".cursor").join("mcp.json");
+    }
+    // No home, no USERPROFILE — match the relative fallback so we still
+    // produce *some* path the caller can present to the user (the error
+    // surfaces at file open).
+    PathBuf::from(".cursor").join("mcp.json")
+}
+
+/// Pure workspace resolver. `cwd` is `Some` when `std::env::current_dir()`
+/// resolves; `None` (e.g. cwd deleted out from under us) falls back to the
+/// relative `.cursor/mcp.json` per PLAN line 582.
+fn cursor_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
+    if let Some(cwd) = cwd {
+        return cwd.join(".cursor").join("mcp.json");
+    }
+    PathBuf::from(".cursor").join("mcp.json")
+}
+
 /// Strip exactly one trailing extension from the file-stem portion of a
 /// path, matching ophis `manager.DeriveServerName` (`utils.go:13-20`).
 ///
@@ -341,5 +454,90 @@ mod tests {
         let s = path.to_string_lossy().into_owned();
         assert!(s.contains("Default"), "got {s}");
         assert!(s.contains("Claude"), "got {s}");
+    }
+
+    // ── Cursor (user) macOS resolver ──────────────────────────────────
+
+    #[test]
+    fn cursor_macos_uses_home_dot_cursor_when_home_resolves() {
+        let path = cursor_config_path_macos_from(Some(Path::new("/Users/synthetic")), "synthetic");
+        assert_eq!(path, PathBuf::from("/Users/synthetic/.cursor/mcp.json"));
+    }
+
+    #[test]
+    fn cursor_macos_falls_back_to_users_user_when_home_unresolved() {
+        let path = cursor_config_path_macos_from(None, "fallback");
+        assert_eq!(path, PathBuf::from("/Users/fallback/.cursor/mcp.json"));
+    }
+
+    // ── Cursor (user) Linux resolver ──────────────────────────────────
+
+    #[test]
+    fn cursor_linux_uses_home_dot_cursor_when_home_resolves() {
+        let path = cursor_config_path_linux_from(Some(Path::new("/home/synthetic")), "synthetic");
+        assert_eq!(path, PathBuf::from("/home/synthetic/.cursor/mcp.json"));
+    }
+
+    #[test]
+    fn cursor_linux_falls_back_to_home_user_when_home_unresolved() {
+        let path = cursor_config_path_linux_from(None, "fallback");
+        assert_eq!(path, PathBuf::from("/home/fallback/.cursor/mcp.json"));
+    }
+
+    #[test]
+    fn cursor_linux_does_not_consult_xdg() {
+        // PLAN line 313: Cursor on Linux must NOT consult XDG_CONFIG_HOME.
+        // The resolver signature doesn't even accept an XDG argument — this
+        // test pins the surface so a future "let's consolidate the linux
+        // resolvers" refactor doesn't accidentally route Cursor through XDG.
+        let path = cursor_config_path_linux_from(Some(Path::new("/home/synthetic")), "synthetic");
+        let s = path.to_string_lossy();
+        assert!(
+            !s.contains(".config"),
+            "must not route through .config: {s}"
+        );
+    }
+
+    // ── Cursor (user) Windows resolver ────────────────────────────────
+
+    #[test]
+    fn cursor_windows_uses_home_when_resolves() {
+        let path = cursor_config_path_windows_from(
+            Some(Path::new(r"C:\Users\synth")),
+            Some(r"C:\Users\synth"),
+        );
+        let s = path.to_string_lossy();
+        assert!(s.contains(".cursor"), "got {s}");
+        assert!(s.contains("mcp.json"), "got {s}");
+    }
+
+    #[test]
+    fn cursor_windows_falls_back_to_userprofile_when_home_unresolved() {
+        let path = cursor_config_path_windows_from(None, Some(r"C:\Users\synth"));
+        let s = path.to_string_lossy();
+        assert!(s.contains(r"C:\Users\synth"), "got {s}");
+        assert!(s.contains(".cursor"), "got {s}");
+    }
+
+    #[test]
+    fn cursor_windows_relative_fallback_when_all_unresolved() {
+        // No home, no USERPROFILE — fall back to relative `.cursor/mcp.json`
+        // so the caller still gets a usable PathBuf; error surfaces at open.
+        let path = cursor_config_path_windows_from(None, None);
+        assert_eq!(path, PathBuf::from(r".cursor").join("mcp.json"));
+    }
+
+    // ── Cursor workspace-mode resolver ────────────────────────────────
+
+    #[test]
+    fn cursor_workspace_uses_cwd_when_resolves() {
+        let path = cursor_workspace_path_from(Some(Path::new("/tmp/myproj")));
+        assert_eq!(path, PathBuf::from("/tmp/myproj/.cursor/mcp.json"));
+    }
+
+    #[test]
+    fn cursor_workspace_falls_back_to_relative_when_cwd_unresolved() {
+        let path = cursor_workspace_path_from(None);
+        assert_eq!(path, PathBuf::from(".cursor").join("mcp.json"));
     }
 }
