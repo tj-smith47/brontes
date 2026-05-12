@@ -17,12 +17,14 @@
 #![allow(clippy::module_name_repetitions)]
 
 mod annotations;
+mod config;
 mod error;
 mod schema;
 mod selector;
 mod tool;
 
 pub use annotations::ToolAnnotations;
+pub use config::Config;
 pub use error::{Error, Result};
 pub use schema::SchemaType;
 pub use selector::{
