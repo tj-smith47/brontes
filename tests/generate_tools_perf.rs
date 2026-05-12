@@ -8,9 +8,11 @@
 //! cargo test --release -- --ignored generate_tools_perf
 //! ```
 //!
-//! Budget: 100 ms cold (first call after a warm-up), 50 ms warm
-//! (5-run average). Cold includes the static-schema cache fill and the
-//! per-tool descriptor build; warm should hit the cache directly.
+//! Budget: 100 ms cold (first timed call, immediately after a discard
+//! warm-up that initializes the `LazyLock` schema caches), 50 ms warm
+//! (5-run average). The "cold" call still pays the per-tool descriptor
+//! build cost; subsequent "warm" calls should hit cached state for any
+//! per-tool work that brontes memoizes.
 
 use clap::{Arg, ArgAction, Command, builder::PossibleValuesParser};
 
