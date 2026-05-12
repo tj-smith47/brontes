@@ -28,7 +28,7 @@
 //!
 //! Each factory call inserts one entry into the `MATCHER_REGISTRY` static.
 //! Each entry holds a `Weak` reference to the produced `Arc`, so dropped
-//! matchers are reaped lazily: the next [`lookup`] whose key collides with a
+//! matchers are reaped lazily: the next `lookup` whose key collides with a
 //! freed slot detects the dead entry (via `Weak::strong_count() == 0`),
 //! evicts it, and reports a miss. CLI tools that build their
 //! [`crate::Config`] once at startup pay essentially no overhead; long-

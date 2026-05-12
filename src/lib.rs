@@ -17,6 +17,30 @@
 //!     .expect("valid config");
 //! // `tools` is a Vec<rmcp::model::Tool> ready to register with a server.
 //! ```
+//!
+//! # Status
+//!
+//! This release ships brontes' **library surface**: [`generate_tools`]
+//! and its supporting types ([`Config`], [`Selector`], the
+//! [`selectors`] factory functions, [`ToolAnnotations`], [`ToolInput`],
+//! [`ToolOutput`], [`SchemaType`], [`Error`], [`Result`], and the
+//! middleware plumbing — [`MiddlewareCtx`], [`Middleware`],
+//! [`BoxedNext`], [`MiddlewareResult`]). A consumer can build the MCP
+//! tool list for their `clap::Command` tree today without a running
+//! MCP server.
+//!
+//! Not yet shipped, planned for a later minor release:
+//!
+//! - The MCP server runtime — `brontes::command()`, `brontes::handle()`,
+//!   and `brontes::run()` — that turns a generated tool list into a
+//!   live MCP server.
+//! - Editor manager subcommands for Claude Desktop, Cursor, and `VSCode`
+//!   config integration.
+//! - HTTP streamable transport (stdio support will land alongside the
+//!   server runtime).
+//!
+//! Bug reports and feature requests:
+//! <https://github.com/tj-smith47/brontes/issues>.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

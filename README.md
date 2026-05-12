@@ -62,6 +62,11 @@ fn build() -> brontes::Result<Vec<rmcp::model::Tool>> {
 
 https://github.com/tj-smith47/brontes
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the local
+CI workflow, MSRV policy, and pull-request expectations.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
