@@ -66,14 +66,18 @@ pub(crate) enum MatcherKind {
 }
 
 /// Captured constructor arguments for a built-in matcher.
-// Fields are read by `generate_tools` (Task 13) and by the unit tests via
-// `lookup`. Allow dead-code until Task 13 lands.
+// MatcherSpec is consumed by the path-validator in generate_tools.
+// Pre-validator, only the registration side is exercised — the
+// allow(dead_code) lifts when the validator wires up.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct MatcherSpec {
     /// Which factory produced this matcher.
     pub kind: MatcherKind,
-    /// The strings passed to the factory (empty for [`MatcherKind::NoFlags`]).
+    /// The strings passed to the factory, in insertion order. **Not
+    /// deduplicated** — the validator that consumes this list treats
+    /// duplicates as separate entries (matching the runtime closure's
+    /// behavior).
     pub args: Vec<String>,
 }
 
@@ -82,6 +86,12 @@ pub(crate) struct MatcherSpec {
 /// Keyed by `Arc::as_ptr(arc) as *const () as usize` so that `Arc::clone`
 /// (which shares the same allocation) continues to resolve through the same
 /// entry.
+//
+// Mutex is sufficient: registry writes happen synchronously during
+// factory construction (effectively at Config-build time, single-
+// threaded for typical consumers); reads happen once during
+// generate_tools and are not on any hot path. RwLock would add API
+// surface (read/write call-sites) for no measurable benefit.
 static MATCHER_REGISTRY: LazyLock<Mutex<HashMap<usize, MatcherSpec>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -98,8 +108,8 @@ fn register<T: ?Sized>(arc: &Arc<T>, spec: MatcherSpec) {
 ///
 /// Returns `None` for matchers that were not produced by the built-in
 /// factories (e.g., hand-written closures).
-// Called by `generate_tools` (Task 13) and by the unit tests below.
-// Allow dead-code until Task 13 lands.
+// Consumed by the path validator in generate_tools. Pre-validator, the
+// function is referenced only by the per-factory registration tests.
 #[allow(dead_code)]
 pub(crate) fn lookup<T: ?Sized>(arc: &Arc<T>) -> Option<MatcherSpec> {
     let key = Arc::as_ptr(arc).cast::<()>() as usize;
