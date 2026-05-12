@@ -90,7 +90,7 @@ pub(crate) struct Manager<C: EditorConfig> {
 impl<C: EditorConfig> Manager<C> {
     /// Read the editor config from `path`. A missing file yields
     /// [`C::default()`](Default::default); other I/O or JSON-parse failures
-    /// surface as [`Error::EditorConfigRead`] or [`Error::EditorConfigParse`].
+    /// surface as [`Error::EditorConfigRead`] or [`Error::EditorConfigJson`].
     ///
     /// Emits `Using config path "<path>"` to stdout on every call (ophis
     /// `manager.go:114` parity).
@@ -107,7 +107,7 @@ impl<C: EditorConfig> Manager<C> {
             path: path.clone(),
             source: e,
         })?;
-        let config: C = serde_json::from_slice(&data).map_err(|e| Error::EditorConfigParse {
+        let config: C = serde_json::from_slice(&data).map_err(|e| Error::EditorConfigJson {
             path: path.clone(),
             source: e,
         })?;
@@ -131,7 +131,7 @@ impl<C: EditorConfig> Manager<C> {
             })?;
         }
         let bytes =
-            serde_json::to_vec_pretty(&self.config).map_err(|e| Error::EditorConfigParse {
+            serde_json::to_vec_pretty(&self.config).map_err(|e| Error::EditorConfigJson {
                 path: self.path.clone(),
                 source: e,
             })?;

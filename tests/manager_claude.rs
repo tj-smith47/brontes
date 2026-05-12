@@ -389,7 +389,7 @@ fn save_no_backup_on_missing_primary() {
 // ── load semantics ────────────────────────────────────────────────────────
 
 #[test]
-fn list_on_invalid_json_returns_parse_error() {
+fn list_on_invalid_json_returns_json_error() {
     let dir = TempDir::new().expect("tempdir");
     let cfg_path = dir.path().join("claude_desktop_config.json");
     std::fs::write(&cfg_path, b"not valid json").expect("seed");
@@ -404,7 +404,7 @@ fn list_on_invalid_json_returns_parse_error() {
     let err = result.expect_err("must fail on invalid JSON");
     let msg = err.to_string();
     assert!(
-        msg.contains("editor config: parse failed"),
+        msg.contains("editor config: JSON error"),
         "unexpected error: {msg}"
     );
 }

@@ -291,7 +291,7 @@ const fn brontes_error_category(e: &crate::Error) -> &'static str {
         crate::Error::Spawn(_) => "spawn",
         crate::Error::Schema(_) => "schema",
         crate::Error::EditorConfigRead { .. }
-        | crate::Error::EditorConfigParse { .. }
+        | crate::Error::EditorConfigJson { .. }
         | crate::Error::EditorConfigBackup { .. }
         | crate::Error::EditorConfigWrite { .. } => "editor_config",
         crate::Error::Panic(_) => "panic",

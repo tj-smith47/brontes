@@ -61,10 +61,11 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    /// Parsing an editor config file as JSON failed.
-    #[error("editor config: parse failed at {path}: {source}")]
-    EditorConfigParse {
-        /// Path that was being parsed.
+    /// JSON serialization or deserialization of an editor config file failed.
+    /// Covers both read-side parse failures and write-side serialize failures.
+    #[error("editor config: JSON error at {path}: {source}")]
+    EditorConfigJson {
+        /// Path that was being read or written.
         path: PathBuf,
         /// Underlying JSON error.
         #[source]

@@ -28,7 +28,7 @@ pub(crate) struct ClaudeConfig {
     /// Configured MCP servers, keyed by server name. Insertion-and-removal
     /// driven by [`super::Manager`] via the [`EditorConfig`] trait.
     #[serde(rename = "mcpServers", default)]
-    pub mcp_servers: BTreeMap<String, ClaudeServer>,
+    pub(crate) mcp_servers: BTreeMap<String, ClaudeServer>,
 }
 
 /// One entry under `mcpServers` in `claude_desktop_config.json`.
@@ -43,14 +43,14 @@ pub(crate) struct ClaudeConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ClaudeServer {
     /// Absolute path to the executable Claude Desktop spawns.
-    pub command: String,
+    pub(crate) command: String,
     /// Argv tail. `None` (or empty `Some(vec![])`) collapses to no JSON key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<Vec<String>>,
+    pub(crate) args: Option<Vec<String>>,
     /// Per-server environment variables. `None` (or empty map) collapses
     /// to no JSON key. Sorted for byte-stable output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env: Option<BTreeMap<String, String>>,
+    pub(crate) env: Option<BTreeMap<String, String>>,
 }
 
 impl EditorConfig for ClaudeConfig {
