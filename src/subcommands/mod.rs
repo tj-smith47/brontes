@@ -27,7 +27,10 @@ use clap::Command;
 /// The double-underscore prefix avoids any plausible collision with a real
 /// user-facing subcommand; the literal name is documented internally only
 /// (consumers never invoke it).
-pub(crate) const MARKER_NAME: &str = "__brontes_marker_v1";
+//
+// This name is implementation detail and may change without notice; do not
+// pattern-match on it externally.
+pub(crate) const MARKER_NAME: &str = "__brontes_internal_marker";
 
 /// Build the `mcp` subtree (group command + start/tools/stream children).
 ///

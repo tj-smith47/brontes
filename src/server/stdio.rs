@@ -37,8 +37,8 @@ use crate::server::BrontesServer;
 ///
 /// - [`crate::Error::McpInitialize`] if the rmcp transport fails to
 ///   negotiate the MCP handshake.
-/// - [`crate::Error::Io`] if the awaited service task panics or the OS
-///   signal listener cannot be installed.
+/// - [`crate::Error::Panic`] if the awaited rmcp service task panics
+///   (the underlying tokio `JoinError`).
 pub(crate) async fn serve_stdio(
     cli: Command,
     cfg_opt: Option<Config>,
@@ -47,27 +47,22 @@ pub(crate) async fn serve_stdio(
     let cfg = cfg_opt.unwrap_or_default();
     init_tracing(log_level_override.or(cfg.log_level));
 
-    // Pre-walk warning pass: surface long tool names once at startup, matching
-    // the behavior already in `generate_tools`. We discard the resulting list
-    // — `list_tools` will rebuild it on the first client request — but a bad
-    // config must surface as a startup failure, not a silent server.
-    crate::generate_tools(&cli, &cfg)?;
-
     let cancel = CancellationToken::new();
     spawn_signal_listener(cancel.clone());
 
-    let server = BrontesServer::new(cli, cfg);
-    let running = server
-        .serve_with_ct(stdio(), cancel)
-        .await
-        .map_err(|e| crate::Error::McpInitialize(Box::new(e)))?;
+    // `BrontesServer::new` walks the tree and caches the tool list at
+    // construction; a bad config surfaces as a startup failure here rather
+    // than as a silent server that fails the first `tools/list` request.
+    let server = BrontesServer::new(cli, cfg)?;
+    let running = server.serve_with_ct(stdio(), cancel).await?;
 
     // `waiting` returns the quit reason; a join error from the underlying
-    // task is unusual — treat it as an Io error so callers can surface it.
-    running.waiting().await.map_err(|e| crate::Error::Io {
-        context: "MCP stdio service join".into(),
-        source: std::io::Error::other(e.to_string()),
-    })?;
+    // task represents a panic-in-task, not an I/O failure — surface it as
+    // [`crate::Error::Panic`] so the category matches the cause.
+    running
+        .waiting()
+        .await
+        .map_err(|e| crate::Error::Panic(format!("MCP stdio service join: {e}")))?;
     Ok(())
 }
 

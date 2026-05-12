@@ -27,15 +27,19 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleServer};
 
 use crate::Config;
+use crate::Result;
 use crate::tool::{ToolInput, ToolOutput};
 
 /// MCP server handler that exposes a walked clap tree as MCP tools.
 ///
 /// Construct via [`BrontesServer::new`] and feed to
 /// [`rmcp::ServiceExt::serve`] over a stdio (or future HTTP) transport.
-/// Tool listing is dynamic: every `tools/list` request re-walks the held
-/// [`clap::Command`] tree and re-applies the [`Config`] filters. This
-/// matches ophis's `registerTools` semantics (`config.go:129`).
+///
+/// Tool listing is computed once at construction time and cached: every
+/// `tools/list` and `tools/call` request consults the cached
+/// [`Vec<Tool>`](rmcp::model::Tool). For v0.1.0 the [`Config`] is immutable
+/// after server construction, so the cache cannot go stale; a future
+/// hot-reload feature would need to invalidate it.
 ///
 /// Marked `#[doc(hidden)]` because consumers are expected to drive the
 /// server through [`crate::handle`] / [`crate::run`]; the type is exposed
@@ -48,6 +52,8 @@ pub struct BrontesServer {
     cli: Command,
     /// User-facing configuration: selectors, annotations, default env, etc.
     cfg: Arc<Config>,
+    /// Tool list, computed once at construction. See type-level docs.
+    tools: Vec<Tool>,
 }
 
 impl BrontesServer {
@@ -55,14 +61,25 @@ impl BrontesServer {
     ///
     /// The clap command is `build()`-ed eagerly so subsequent tool-listing
     /// calls see a stable shape (global args propagated, defaults resolved).
+    ///
+    /// Returns [`crate::Error::Config`] / [`crate::Error::Schema`] if the
+    /// pre-walk surfaces a bad config; this matches the existing
+    /// [`crate::server::stdio::serve_stdio`] pre-walk warning pass while
+    /// also seeding the per-server tool cache.
+    ///
+    /// # Errors
+    ///
+    /// Any error surfaced by [`crate::generate_tools`] (bad config, bad
+    /// schema).
     #[doc(hidden)]
-    #[must_use]
-    pub fn new(mut cli: Command, cfg: Config) -> Self {
+    pub fn new(mut cli: Command, cfg: Config) -> Result<Self> {
         cli.build();
-        Self {
+        let tools = crate::generate_tools(&cli, &cfg)?;
+        Ok(Self {
             cli,
             cfg: Arc::new(cfg),
-        }
+            tools,
+        })
     }
 
     /// Build the [`ServerInfo`] (a.k.a. [`InitializeResult`]) reported on
@@ -87,13 +104,12 @@ impl BrontesServer {
         InitializeResult::new(capabilities).with_server_info(server_info)
     }
 
-    /// Look up a tool by its MCP name in the current walked tree.
+    /// Look up a tool by its MCP name in the cached tool list.
     ///
     /// Called by [`Self::call_tool`] to validate the request before
     /// dispatching to [`crate::exec`].
     fn find_tool(&self, name: &str) -> Option<Tool> {
-        let tools = crate::generate_tools(&self.cli, &self.cfg).ok()?;
-        tools.into_iter().find(|t| t.name.as_ref() == name)
+        self.tools.iter().find(|t| t.name.as_ref() == name).cloned()
     }
 }
 
@@ -106,17 +122,15 @@ impl ServerHandler for BrontesServer {
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, McpError> {
-        let tools = crate::generate_tools(&self.cli, &self.cfg)
-            .map_err(|e| McpError::internal_error(format!("generate_tools failed: {e}"), None))?;
-        Ok(ListToolsResult::with_all_items(tools))
+    ) -> std::result::Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult::with_all_items(self.tools.clone()))
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> std::result::Result<CallToolResult, McpError> {
         let name = request.name.as_ref();
 
         // Validate the tool exists in the current walked tree. The MCP
@@ -214,7 +228,7 @@ mod tests {
 
     #[test]
     fn server_info_uses_root_name_and_version_by_default() {
-        let s = BrontesServer::new(root(), Config::default());
+        let s = BrontesServer::new(root(), Config::default()).expect("construct");
         let info = s.build_server_info();
         assert_eq!(info.server_info.name, "myapp");
         assert_eq!(info.server_info.version, "1.2.3");
@@ -225,7 +239,7 @@ mod tests {
     fn server_info_respects_config_implementation() {
         let imp = Implementation::new("custom-name", "9.9.9");
         let cfg = Config::default().implementation(imp);
-        let s = BrontesServer::new(root(), cfg);
+        let s = BrontesServer::new(root(), cfg).expect("construct");
         let info = s.build_server_info();
         assert_eq!(info.server_info.name, "custom-name");
         assert_eq!(info.server_info.version, "9.9.9");
@@ -233,9 +247,23 @@ mod tests {
 
     #[test]
     fn find_tool_locates_walked_command() {
-        let s = BrontesServer::new(root(), Config::default());
+        let s = BrontesServer::new(root(), Config::default()).expect("construct");
         assert!(s.find_tool("myapp_greet").is_some());
         assert!(s.find_tool("nonexistent").is_none());
+    }
+
+    #[test]
+    fn tools_cached_at_construction() {
+        // Cache invariance: after construction, mutating the held cli or cfg
+        // cannot be observed (we just count that tools is exactly what
+        // generate_tools produced once).
+        let s = BrontesServer::new(root(), Config::default()).expect("construct");
+        // Same number of tools is reported every time find_tool runs.
+        let n1 = s.tools.len();
+        let _ = s.find_tool("myapp_greet");
+        let n2 = s.tools.len();
+        assert_eq!(n1, n2);
+        assert!(n1 >= 1, "at least one tool from the walked tree");
     }
 
     #[test]

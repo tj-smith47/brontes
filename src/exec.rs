@@ -12,7 +12,9 @@
 //! and cached in a [`OnceLock`]. This mirrors ophis's eager `os.Executable()`
 //! capture at module init (`execute.go:15`) while deferring the resolution
 //! to the first tool call so unit tests that never spawn a subprocess do
-//! not depend on the executable being resolvable.
+//! not depend on the executable being resolvable. If the binary is moved
+//! or replaced between brontes startup and the first call, the captured
+//! path reflects the binary's location at first-call time.
 //!
 //! # Cancellation
 //!
@@ -35,16 +37,29 @@ use std::process::Stdio;
 use std::sync::OnceLock;
 
 use serde_json::Value;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command as TokioCommand;
 use tokio_util::sync::CancellationToken;
 
 use crate::tool::{ToolInput, ToolOutput};
 use crate::{Error, Result};
 
+/// Soft cap on captured stdout/stderr per tool call (16 MiB each).
+///
+/// Tool subprocess output is buffered into [`Vec<u8>`] before being handed
+/// back as a [`ToolOutput`]. Without a cap a runaway tool can OOM brontes
+/// itself. When a stream crosses the cap, brontes emits one `warn` and
+/// continues reading (discarding the overflow) so the child does not block
+/// on a full pipe.
+pub(crate) const OUTPUT_CAP_BYTES: usize = 16 * 1024 * 1024;
+
 /// Cached path to the current executable.
 ///
-/// Resolved lazily on the first call to [`current_executable`]. Cached for
-/// the lifetime of the process so each tool call avoids a redundant syscall.
+/// Captured lazily on the first tool call. If the binary is moved/replaced
+/// between brontes startup and the first call, the captured path reflects
+/// the binary's location at first-call time. Once captured, the path is
+/// reused for the lifetime of the process so each tool call avoids a
+/// redundant syscall.
 static EXECUTABLE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Return the path to the current executable, caching the result.
@@ -204,43 +219,113 @@ pub(crate) async fn run_tool(
         cmd.env(k, v);
     }
 
-    let child = cmd.spawn().map_err(Error::Spawn)?;
+    let mut child = cmd.spawn().map_err(Error::Spawn)?;
 
-    // Run wait_with_output in a select against cancellation. The child has
-    // already moved into the `wait_with_output` future; cancellation works
-    // via the kill_on_drop guard set above — when the select! branch wins,
-    // the unselected branch (and the child it holds) is dropped, firing
-    // kill_on_drop and reaping the subprocess cleanly.
-    let wait = child.wait_with_output();
-    tokio::pin!(wait);
+    // Take the pipes; we read them concurrently into capped buffers so that
+    // (a) a runaway tool cannot OOM brontes itself, and (b) the child does
+    // not deadlock writing to a full pipe — we keep draining even after
+    // the cap is hit, just discarding the overflow.
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .expect("child stdout was set to Stdio::piped above");
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .expect("child stderr was set to Stdio::piped above");
+
+    let stdout_task = tokio::spawn(read_capped(stdout_pipe, "stdout", tool_name.to_string()));
+    let stderr_task = tokio::spawn(read_capped(stderr_pipe, "stderr", tool_name.to_string()));
 
     tokio::select! {
         () = cancel.cancelled() => {
-            // `wait` (and the contained child) drops at end-of-arm,
-            // triggering kill_on_drop. We do not call drop() explicitly
-            // because the future does not implement Drop directly (the
-            // useful Drop lives on the wrapped Child).
+            // Drop order: child (kill_on_drop) → reader tasks. We do not
+            // need to await the reader tasks; the kernel closes the pipes
+            // when the child dies, the reads return, and the tasks finish.
             Err(Error::Io {
                 context: format!("tool '{tool_name}' cancelled"),
                 source: std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"),
             })
         }
-        result = &mut wait => {
-            let output = result.map_err(|e| Error::Io {
-                context: format!("wait_with_output for tool '{tool_name}'"),
+        status = child.wait() => {
+            let status = status.map_err(|e| Error::Io {
+                context: format!("wait for tool '{tool_name}'"),
                 source: e,
             })?;
+            // Reader tasks finish naturally once the child closes its pipes.
+            let stdout = stdout_task.await.map_err(|e| Error::Panic(format!(
+                "stdout reader task for tool '{tool_name}': {e}"
+            )))?;
+            let stderr = stderr_task.await.map_err(|e| Error::Panic(format!(
+                "stderr reader task for tool '{tool_name}': {e}"
+            )))?;
             Ok(ToolOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
                 // ExitStatus::code() returns None when killed by signal;
                 // ophis surfaces this as the underlying *exec.ExitError
                 // ExitCode() value (-1 on unix signal). Match with the
                 // documented -1 sentinel (tool.rs).
-                exit_code: output.status.code().unwrap_or(-1),
+                exit_code: status.code().unwrap_or(-1),
             })
         }
     }
+}
+
+/// Drain an async byte stream into a `Vec<u8>` capped at
+/// [`OUTPUT_CAP_BYTES`].
+///
+/// Reads in fixed-size chunks; once the buffer reaches the cap, the
+/// remainder is read-and-discarded (so the child does not block on a full
+/// pipe) and a single `warn` is emitted. Returns whatever bytes were
+/// retained — at most `OUTPUT_CAP_BYTES`.
+async fn read_capped<R: AsyncRead + Unpin>(
+    mut reader: R,
+    stream_label: &'static str,
+    tool_name: String,
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let mut chunk = [0u8; 8 * 1024];
+    let mut warned = false;
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let remaining = OUTPUT_CAP_BYTES.saturating_sub(buf.len());
+                if remaining == 0 {
+                    if !warned {
+                        tracing::warn!(
+                            target: "brontes::exec",
+                            tool = %tool_name,
+                            stream = %stream_label,
+                            limit_bytes = OUTPUT_CAP_BYTES,
+                            "tool output exceeded soft cap; further output truncated"
+                        );
+                        warned = true;
+                    }
+                    // Continue draining so the child does not block on a
+                    // full pipe — but discard the bytes.
+                    continue;
+                }
+                if n <= remaining {
+                    buf.extend_from_slice(&chunk[..n]);
+                } else {
+                    buf.extend_from_slice(&chunk[..remaining]);
+                    if !warned {
+                        tracing::warn!(
+                            target: "brontes::exec",
+                            tool = %tool_name,
+                            stream = %stream_label,
+                            limit_bytes = OUTPUT_CAP_BYTES,
+                            "tool output exceeded soft cap; further output truncated"
+                        );
+                        warned = true;
+                    }
+                }
+            }
+        }
+    }
+    buf
 }
 
 #[cfg(test)]
@@ -361,5 +446,32 @@ mod tests {
                 "b".to_string()
             ]
         );
+    }
+
+    /// Drive `read_capped` with > 16 MiB of input and assert the returned
+    /// buffer is exactly the cap. Uses an in-memory reader so the test does
+    /// not depend on spawning a subprocess that can emit ~17 MiB on every
+    /// platform's CI.
+    #[tokio::test]
+    async fn read_capped_truncates_at_cap() {
+        // Build a reader that yields 17 MiB of zeros.
+        let total = OUTPUT_CAP_BYTES + (1024 * 1024);
+        let source = vec![0u8; total];
+        let reader = std::io::Cursor::new(source);
+        let captured = read_capped(reader, "stdout", "test-tool".into()).await;
+        assert_eq!(
+            captured.len(),
+            OUTPUT_CAP_BYTES,
+            "captured output must be exactly the cap"
+        );
+    }
+
+    /// Below the cap, all bytes pass through.
+    #[tokio::test]
+    async fn read_capped_passes_through_below_cap() {
+        let payload = b"hello world".to_vec();
+        let reader = std::io::Cursor::new(payload.clone());
+        let captured = read_capped(reader, "stdout", "test-tool".into()).await;
+        assert_eq!(captured, payload);
     }
 }

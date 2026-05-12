@@ -102,13 +102,44 @@ pub enum Error {
     /// Boxed because `ServerInitializeError` is several hundred bytes — keeping
     /// the variant body small keeps the overall [`Error`] enum compact for the
     /// common (non-error) `Result<T, Error>` path.
+    ///
+    /// Uses `#[source]` (not `#[from]`) so the auto-generated `From` would
+    /// only fire on `Box<...>`; an explicit `From<ServerInitializeError>`
+    /// impl below boxes inside so bare-error `?` propagation also compiles.
     #[error("mcp initialize error: {0}")]
-    McpInitialize(#[from] Box<rmcp::service::ServerInitializeError>),
+    McpInitialize(#[source] Box<rmcp::service::ServerInitializeError>),
 
     /// An MCP protocol-level error occurred after the server was running
     /// (transport closed unexpectedly, response wrong shape, cancellation, etc.).
+    ///
+    /// Same `#[source] Box<...>` + hand-rolled `From` pattern as
+    /// [`Error::McpInitialize`].
     #[error("mcp protocol error: {0}")]
-    Mcp(#[from] Box<rmcp::ServiceError>),
+    Mcp(#[source] Box<rmcp::ServiceError>),
+}
+
+impl From<rmcp::service::ServerInitializeError> for Error {
+    fn from(err: rmcp::service::ServerInitializeError) -> Self {
+        Self::McpInitialize(Box::new(err))
+    }
+}
+
+impl From<Box<rmcp::service::ServerInitializeError>> for Error {
+    fn from(err: Box<rmcp::service::ServerInitializeError>) -> Self {
+        Self::McpInitialize(err)
+    }
+}
+
+impl From<rmcp::ServiceError> for Error {
+    fn from(err: rmcp::ServiceError) -> Self {
+        Self::Mcp(Box::new(err))
+    }
+}
+
+impl From<Box<rmcp::ServiceError>> for Error {
+    fn from(err: Box<rmcp::ServiceError>) -> Self {
+        Self::Mcp(err)
+    }
 }
 
 /// Result alias for fallible brontes operations.

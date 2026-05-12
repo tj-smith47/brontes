@@ -395,6 +395,13 @@ pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Conf
         }
         Some(("tools", sub)) => crate::subcommands::tools::run(sub, cli, Some(cfg_owned)),
         Some(("stream", sub)) => crate::subcommands::stream::run(sub, cli.clone(), Some(cfg_owned)),
+        // Guard the internal marker subcommand: it parses cleanly through the
+        // clap surface (because it is registered as a hidden subcommand), but
+        // it is implementation detail and is not runnable. Surface a friendly
+        // error that does not leak the literal marker name.
+        Some((other, _)) if other == crate::subcommands::MARKER_NAME => Err(crate::Error::Config(
+            "internal marker subcommand is not a runnable command".into(),
+        )),
         Some((other, _)) => Err(crate::Error::Config(format!(
             "unknown mcp subcommand: {other:?}"
         ))),
@@ -666,5 +673,41 @@ mod tests {
         let tools = generate_tools(&root, &cfg).expect("should succeed");
         let found = tools.iter().any(|t| t.name.contains(long_sub));
         assert!(found, "long-named tool must still be generated");
+    }
+
+    // ── marker-name guard ─────────────────────────────────────────────────────
+
+    /// `mcp __brontes_internal_marker` parses through clap (the subcommand is
+    /// hidden but still registered). `handle()` must intercept it and return a
+    /// friendly error that does NOT leak the literal marker name.
+    #[tokio::test]
+    async fn handle_rejects_marker_subcommand_invocation() {
+        let cli = Command::new("myapp")
+            .version("0.0.1")
+            .subcommand(command(None));
+        // Parse `myapp mcp <marker>` directly.
+        let matches = cli
+            .clone()
+            .try_get_matches_from(["myapp", "mcp", crate::subcommands::MARKER_NAME])
+            .expect("clap parses the hidden marker subcommand");
+        let mcp_matches = matches
+            .subcommand_matches("mcp")
+            .expect("mcp subcommand selected");
+        let err = handle(mcp_matches, &cli, None)
+            .await
+            .expect_err("invoking the marker must surface an error");
+        let msg = err.to_string();
+        assert!(
+            matches!(err, crate::Error::Config(_)),
+            "expected Config error, got {err:?}"
+        );
+        assert!(
+            !msg.contains(crate::subcommands::MARKER_NAME),
+            "error message must not leak the marker name; got {msg:?}"
+        );
+        assert!(
+            msg.contains("internal marker subcommand is not a runnable command"),
+            "error must use the friendly message; got {msg:?}"
+        );
     }
 }

@@ -53,7 +53,8 @@ async fn stdio_tools_list_returns_walked_tree() {
     let server_task = {
         let cancel = cancel.clone();
         tokio::spawn(async move {
-            let server = BrontesServer::new(fixture_cli(), brontes::Config::default());
+            let server = BrontesServer::new(fixture_cli(), brontes::Config::default())
+                .expect("construct server");
             let running = server
                 .serve_with_ct((server_read, server_write), cancel)
                 .await
@@ -109,7 +110,8 @@ async fn stdio_call_tool_unknown_name_is_error() {
     let server_task = {
         let cancel = cancel.clone();
         tokio::spawn(async move {
-            let server = BrontesServer::new(fixture_cli(), brontes::Config::default());
+            let server = BrontesServer::new(fixture_cli(), brontes::Config::default())
+                .expect("construct server");
             let running = server
                 .serve_with_ct((server_read, server_write), cancel)
                 .await
@@ -146,7 +148,8 @@ async fn cancellation_token_terminates_server_loop() {
     let server_task = {
         let cancel = cancel.clone();
         tokio::spawn(async move {
-            let server = BrontesServer::new(fixture_cli(), brontes::Config::default());
+            let server = BrontesServer::new(fixture_cli(), brontes::Config::default())
+                .expect("construct server");
             let running = server
                 .serve_with_ct((server_read, server_write), cancel)
                 .await
