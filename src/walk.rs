@@ -80,16 +80,29 @@ pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
     false
 }
 
-/// A group-only command requires a subcommand AND defines no user-facing
-/// arguments. clap auto-injects `--help` (and `--version` on the root when
-/// `Command::version` is set); those ids are excluded from the count.
+/// A group-only command requires a subcommand AND defines no LOCAL
+/// user-facing arguments.
+///
+/// Excluded from the count:
+/// - clap's auto-injected `help` / `version` ids.
+/// - Args propagated from an ancestor via `.global(true)`. `clap::Command::build()`
+///   copies global args onto every descendant, so an intermediate group with no
+///   args of its own can still report inherited globals from `get_arguments()`.
+///   Counting those would mean a single root-level `--verbose` flag would
+///   prevent every group node in the tree from being filtered.
+///
+/// Note: `is_global_set()` is also `true` for the arg on the command that
+/// originally declared `.global(true)`. A leaf whose only declared arg is itself
+/// `.global(true)` is therefore counted as having no local user args — but
+/// leaves don't typically set `subcommand_required(true)`, so the `requires_sub`
+/// gate keeps that case from being misclassified as group-only.
 fn is_group_only(cmd: &Command) -> bool {
     let requires_sub = cmd.is_subcommand_required_set();
     let user_args_count = cmd
         .get_arguments()
         .filter(|a| {
             let id = a.get_id().as_str();
-            id != "help" && id != "version"
+            id != "help" && id != "version" && !a.is_global_set()
         })
         .count();
     requires_sub && user_args_count == 0

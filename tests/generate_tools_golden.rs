@@ -34,17 +34,13 @@
 //! substring of `"helpful"`, this is the documented quirk in
 //! `walk::should_filter`).
 //!
-//! # Group commands surface as tools (and why)
+//! # Group commands do NOT surface as tools
 //!
-//! `golden-cli`, `golden-cli_act`, and `golden-cli_edge` also appear in the
-//! generated tool list even though they declare `.subcommand_required(true)`
-//! and define no user-facing args of their own. The reason is the global
-//! `--verbose` flag on the root: `clap::Command::build()` propagates global
-//! args to every descendant, so by the time `walk::is_group_only` inspects
-//! `act` / `edge`, each carries one inherited arg (`verbose`) and is no
-//! longer considered group-only. The golden output pins that behaviour
-//! verbatim — if a future change to `is_group_only` decides to ignore
-//! globals when counting "user args", the fixture diff will surface it.
+//! `golden-cli` (root), `golden-cli act`, and `golden-cli edge` declare
+//! `.subcommand_required(true)` with no LOCAL user-facing args, so they are
+//! filtered out by `walk::is_group_only`. The root's `.global(true) --verbose`
+//! flag propagates to every descendant but is excluded from the local-arg
+//! count, so it does not promote intermediate group nodes into tools.
 
 use clap::{Arg, ArgAction, Command, builder::PossibleValuesParser};
 
