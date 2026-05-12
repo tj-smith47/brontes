@@ -10,7 +10,7 @@ use brontes::Config;
 
 #[test]
 fn custom_command_name_does_not_filter_user_mcp_subtree() {
-    // ophis tools_test.go::TestCustomCommandName (Phase 1 subset).
+    // ophis tools_test.go::TestCustomCommandName parity port.
     //
     // The user's `mcp` subtree must survive because the brontes filter
     // uses Config.command_name ("agent") as the substring, not "mcp".
@@ -35,7 +35,7 @@ fn custom_command_name_does_not_filter_user_mcp_subtree() {
         names.contains(&"myapp_status"),
         "user's status should survive: got {names:?}"
     );
-    // No "agent" tools — the brontes subtree is not built yet in Phase 1.
+    // No "agent" tools — the brontes mcp subtree is not part of this release.
     assert!(
         !names.iter().any(|n| n.contains("agent")),
         "no agent tool should leak: {names:?}"

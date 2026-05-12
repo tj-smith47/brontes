@@ -1,4 +1,5 @@
-//! Tool-name parity ports from ophis (PLAN §5.6).
+//! Tool-name parity ports from ophis: cobra-style command path → MCP tool
+//! name, with prefix substitution and underscore joining.
 //!
 //! Verifies that `generate_tools` builds MCP tool names according to the
 //! prefix-substitution rule: only the first space-delimited token (the root
@@ -11,7 +12,7 @@ use brontes::Config;
 
 #[test]
 fn omctl_cost_by_cell_list_naming() {
-    // PLAN §5.6 canonical case: long command path with explicit prefix.
+    // Canonical case: long command path with an explicit prefix.
     let root = Command::new("omnistrate-ctl").subcommand(
         Command::new("cost").subcommand_required(true).subcommand(
             Command::new("by-cell")

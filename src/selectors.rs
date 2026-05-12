@@ -43,7 +43,9 @@ use std::{
 use crate::selector::{CmdMatcher, FlagMatcher};
 
 // ---------------------------------------------------------------------------
-// Side-table for introspectability (§2.7)
+// Side-table mapping each registered matcher's `Arc` pointer back to its
+// factory inputs, so callers (e.g. `generate_tools`) can validate paths and
+// flag names against the original configuration after type-erasure.
 // ---------------------------------------------------------------------------
 
 /// The kind of built-in matcher stored in the registry.

@@ -9,9 +9,6 @@
 //!   `false`, or `None`; invalid string parsing does not exist in this API.
 //! - `mixed valid and invalid values` — same reason.
 //! - `strconv.ParseBool variants` — same reason (no string parsing).
-//! - `TestCreateToolFromCmd_Annotations` end-to-end — deferred to Task 13
-//!   (`generate_tools` integration) where the full tool-generation pipeline
-//!   is available.
 
 use brontes::ToolAnnotations;
 use pretty_assertions::assert_eq;

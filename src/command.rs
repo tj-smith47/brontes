@@ -76,7 +76,8 @@ pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
     // 2. Build-time path validation.
     validate_paths(&resolved, cfg)?;
 
-    // 3. Compute the effective prefix (PLAN §5.6).
+    // 3. Compute the effective prefix: `tool_name_prefix` override when non-empty,
+    //    otherwise fall back to the root command name.
     let prefix = cfg
         .tool_name_prefix
         .as_deref()
@@ -169,7 +170,9 @@ fn build_tool_name(path: &str, prefix: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Build-time path validation (PLAN §2.7)
+// Build-time path validation: every selector/config path must match an existing
+// command in the walked tree, so misconfiguration surfaces at startup rather
+// than silently no-oping at request time.
 // ---------------------------------------------------------------------------
 
 fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Result<()> {
@@ -285,7 +288,7 @@ mod tests {
 
     #[test]
     fn build_tool_name_omctl_case() {
-        // PLAN §5.6 canonical case.
+        // Canonical case: nested command path with an explicit prefix override.
         let name = build_tool_name("omnistrate-ctl cost by-cell list", "omctl");
         assert_eq!(name, "omctl_cost_by-cell_list");
     }

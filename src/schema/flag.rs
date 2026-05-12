@@ -146,7 +146,8 @@ fn build_arg_schema(arg: &Arg, cfg: &Config, cmd_path: &str) -> Map<String, Valu
             "enum".into(),
             Value::Array(possible_values.into_iter().map(Value::String).collect()),
         );
-        // Per PLAN §5.1: PossibleValuesParser → type: "string" + enum.
+        // `PossibleValuesParser` carries an explicit enum domain; lower it as
+        // `type: "string"` with an accompanying `enum` array.
         prop.insert("type".into(), Value::String("string".into()));
     }
 
