@@ -1,10 +1,10 @@
 //! Tool annotation hints forwarded to MCP clients.
 //!
-//! [`ToolAnnotations`] is the brontes-side representation of the five
-//! optional hint fields defined by the Model Context Protocol.  When
-//! all fields are `None` it serialises to nothing; when at least one
-//! field is set it converts to an `rmcp::model::ToolAnnotations` that
-//! carries exactly the fields that were provided.
+//! [`ToolAnnotations`] is the brontes-side representation of an optional
+//! title and four optional behavior hints defined by the Model Context
+//! Protocol.  When all fields are `None` it serialises to nothing; when
+//! at least one field is set it converts to an `rmcp::model::ToolAnnotations`
+//! that carries exactly the fields that were provided.
 //!
 //! ## Wire-shape divergence from ophis
 //!

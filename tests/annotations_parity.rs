@@ -28,6 +28,26 @@ fn default_returns_none() {
     );
 }
 
+#[test]
+fn title_empty_string_propagates() {
+    // Empty-string title is treated as set (the consumer passed Some, not None),
+    // so to_rmcp returns Some and the wire receives `"title": ""`. This pins the
+    // behavior — a future change that suppresses empty-string titles will need
+    // to update this test deliberately.
+    let ann = ToolAnnotations {
+        title: Some(String::new()),
+        ..Default::default()
+    };
+    let rmcp = ann
+        .to_rmcp()
+        .expect("Some(\"\".into()) is a set field, should not collapse to None");
+    assert_eq!(rmcp.title.as_deref(), Some(""));
+    assert!(rmcp.read_only_hint.is_none());
+    assert!(rmcp.destructive_hint.is_none());
+    assert!(rmcp.idempotent_hint.is_none());
+    assert!(rmcp.open_world_hint.is_none());
+}
+
 // ---------------------------------------------------------------------------
 // title (ophis: "title")
 // ---------------------------------------------------------------------------
@@ -99,7 +119,7 @@ fn destructive_hint_false() {
 }
 
 // ---------------------------------------------------------------------------
-// idempotentHint true AND false (ophis covers true; §11 divergence adds false)
+// idempotentHint true AND false (ophis covers true; wire-shape divergence divergence adds false)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -116,7 +136,7 @@ fn idempotent_hint_true() {
 
 #[test]
 fn idempotent_hint_false() {
-    // §11 divergence: brontes forwards Some(false) explicitly rather than
+    // wire-shape divergence divergence: brontes forwards Some(false) explicitly rather than
     // omitting the field, so the client receives an unambiguous signal.
     let ann = ToolAnnotations {
         idempotent_hint: Some(false),
@@ -182,7 +202,7 @@ fn all_fields_together() {
 // Extra: wire-shape proof (cannot be expressed in ophis suite)
 //
 // Serialise the rmcp output and confirm that Some(false) survives as an
-// explicit JSON field, proving the §11 divergence behaves as documented.
+// explicit JSON field, proving the wire-shape divergence divergence behaves as documented.
 // ---------------------------------------------------------------------------
 
 #[test]
