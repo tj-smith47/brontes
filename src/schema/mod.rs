@@ -8,6 +8,7 @@
 // `types` is public because consumers reference `SchemaType` via
 // `Config.flag_type_overrides`.
 pub(crate) mod cache;
+pub(crate) mod flag;
 pub mod types;
 
 pub use types::SchemaType;
