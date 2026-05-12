@@ -1,0 +1,69 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the library
+    cmds:
+      - cargo build --all-features
+
+  check:
+    desc: cargo check on all targets
+    cmds:
+      - cargo check --all-targets --all-features
+
+  fmt:
+    desc: Format all code
+    cmds:
+      - cargo fmt --all
+
+  fmt:check:
+    desc: Verify formatting
+    cmds:
+      - cargo fmt --all -- --check
+
+  clippy:
+    desc: Run clippy with warnings as errors
+    cmds:
+      - cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    desc: Run all tests
+    cmds:
+      - cargo test --all-features
+
+  doc:
+    desc: Build docs (errors-as-warnings)
+    cmds:
+      - RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+
+  audit:
+    desc: Security audit of dependencies
+    cmds:
+      - cargo audit
+
+  deny:
+    desc: Run cargo deny checks
+    cmds:
+      - cargo deny check
+
+  ci:
+    desc: Full local CI sweep (fmt, clippy, test, doc, audit)
+    cmds:
+      - task: fmt:check
+      - task: clippy
+      - task: test
+      - task: doc
+      - task: audit
+
+  commit:
+    desc: Run the pre-commit chain (fmt + clippy + test) then commit. Pass commit args via --.
+    cmds:
+      - task: fmt
+      - task: clippy
+      - task: test
+      - git commit {{.CLI_ARGS}}
