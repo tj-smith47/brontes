@@ -49,14 +49,29 @@ use crate::selector::FlagMatcher;
 /// filters becomes a tool. When non-empty, a command must be claimed by at
 /// least one selector; commands not claimed are excluded.
 ///
+/// # Substring filter
+///
+/// Commands whose space-joined path contains any of `command_name` /
+/// `"help"` / `"completion"` are excluded. The substring is matched
+/// permissively — a command named `"helpful"` is also excluded because
+/// `"help"` appears as a substring. See [`Config::command_name`] for
+/// the rename escape hatch.
+///
 /// # Errors
 ///
 /// Returns [`crate::Error::Config`] if any path-keyed [`Config`] entry
 /// references a command path or flag name that does not exist in the walked
 /// tree, or if an introspectable selector factory captured an unknown path.
 pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
-    // 1. Walk the tree.
-    let resolved = crate::walk::walk(root);
+    // clap propagates `.global(true)` args lazily on `Command::build()`.
+    // Clone-then-build ensures every walked command's `get_arguments()`
+    // includes inherited globals, so path validation and schema building
+    // see a consistent view of which flags exist on each command.
+    let mut built = root.clone();
+    built.build();
+
+    // 1. Walk the (now-built) tree.
+    let resolved = crate::walk::walk(&built);
 
     // 2. Build-time path validation.
     validate_paths(&resolved, cfg)?;
@@ -147,6 +162,9 @@ fn build_tool_name(path: &str, prefix: &str) -> String {
     // Preserve everything after the first space (the subcommand portion).
     let after_first = path.find(' ').map_or("", |i| &path[i..]);
     let body = format!("{prefix}{after_first}");
+    // Final pass collapses ALL spaces to underscores, including any in `prefix`.
+    // This is a uniform post-process — consumers passing a prefix with spaces
+    // get the same treatment as path tokens with embedded spaces.
     body.replace(' ', "_")
 }
 
@@ -293,6 +311,14 @@ mod tests {
         assert_eq!(name, "myapp_mcp_install");
     }
 
+    #[test]
+    fn build_tool_name_collapses_spaces_in_prefix() {
+        // A prefix with internal spaces gets the same "spaces → underscores"
+        // treatment as the rest of the name. This is the deliberate uniform
+        // post-process; consumers passing "my prefix" get "my_prefix_sub".
+        assert_eq!(build_tool_name("ignored sub", "my prefix"), "my_prefix_sub");
+    }
+
     // ── validate_paths ────────────────────────────────────────────────────────
 
     fn root_with_list() -> Command {
@@ -354,6 +380,34 @@ mod tests {
             serde_json::json!({"type": "integer"}),
         );
         assert!(validate_paths(&resolved, &cfg).is_ok());
+    }
+
+    // ── global flag validation ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_paths_accepts_global_flag_at_child_path() {
+        // A global flag declared on the root is reachable at child paths
+        // via clap's global propagation. Annotating it at the child path
+        // must NOT trigger an unknown-flag error.
+        use clap::ArgAction;
+        let root = Command::new("myapp")
+            .arg(
+                Arg::new("verbose")
+                    .long("verbose")
+                    .global(true)
+                    .action(ArgAction::SetTrue),
+            )
+            .subcommand(Command::new("sub"));
+        let cfg = Config::default().flag_schema(
+            "myapp sub",
+            "verbose",
+            serde_json::json!({"type": "boolean", "description": "override"}),
+        );
+
+        // This must succeed — a Config::Error::Config result would mean
+        // we're rejecting a valid annotation.
+        let tools = generate_tools(&root, &cfg).expect("global flag at child path must validate");
+        assert!(!tools.is_empty(), "tree should produce at least one tool");
     }
 
     // ── first-match-wins ──────────────────────────────────────────────────────

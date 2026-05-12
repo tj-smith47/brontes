@@ -1,9 +1,10 @@
 //! Base-schema cache for [`ToolInput`] and [`ToolOutput`].
 //!
 //! Each static is initialised once on first read via [`std::sync::LazyLock`].
-//! Per-tool customisation should call [`fresh_tool_input_schema`] or
-//! [`fresh_tool_output_schema`] to obtain an independent clone to mutate,
-//! rather than touching the cached [`Arc`] directly.
+//! Per-tool customisation should call [`fresh_tool_input_schema`] to obtain
+//! an independent clone to mutate, rather than touching the cached [`Arc`]
+//! directly.  The output schema is invariant per tool; consumers share the
+//! single cached [`Arc`] via [`crate::schema::build_output_schema`].
 
 use std::sync::{Arc, LazyLock};
 
@@ -13,17 +14,14 @@ use rmcp::model::JsonObject;
 ///
 /// The value is computed once and then shared; callers that need a mutable
 /// copy should use [`fresh_tool_input_schema`].
-// Task 11 (per-tool orchestrator) will be the first external consumer.
-#[allow(dead_code)]
 pub(crate) static TOOL_INPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
     LazyLock::new(|| Arc::new(build_schema::<crate::tool::ToolInput>()));
 
 /// Cached base schema for [`crate::tool::ToolOutput`].
 ///
-/// The value is computed once and then shared; callers that need a mutable
-/// copy should use [`fresh_tool_output_schema`].
-// Task 11 (per-tool orchestrator) will be the first external consumer.
-#[allow(dead_code)]
+/// The value is computed once and then shared.  Because the output shape is
+/// invariant per tool, [`crate::schema::build_output_schema`] shares this
+/// single [`Arc`] across every tool rather than cloning the map.
 pub(crate) static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
     LazyLock::new(|| Arc::new(build_schema::<crate::tool::ToolOutput>()));
 
@@ -35,8 +33,6 @@ pub(crate) static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
 /// `#[derive(JsonSchema)]` struct.  That cannot happen for any well-formed
 /// struct — the `JsonSchema` derive contract guarantees an Object root with
 /// `"properties"`.  If this ever fires it is a bug in schemars, not in brontes.
-// Only called from the two LazyLock initialisers above; suppress false positive.
-#[allow(dead_code)]
 fn build_schema<T: schemars::JsonSchema>() -> JsonObject {
     let schema = schemars::schema_for!(T);
     match schema.to_value() {
@@ -52,21 +48,8 @@ fn build_schema<T: schemars::JsonSchema>() -> JsonObject {
 /// Each call returns an independent copy.  Mutating the returned map does not
 /// affect the cached singleton; wrap the result in [`Arc::new`] before handing
 /// it to `rmcp`.
-// Task 11 (per-tool orchestrator) will be the first external consumer.
-#[allow(dead_code)]
 pub(crate) fn fresh_tool_input_schema() -> JsonObject {
     (**TOOL_INPUT_BASE_SCHEMA).clone()
-}
-
-/// Return a fresh [`JsonObject`] clone of the `ToolOutput` base schema.
-///
-/// Each call returns an independent copy.  Mutating the returned map does not
-/// affect the cached singleton; wrap the result in [`Arc::new`] before handing
-/// it to `rmcp`.
-// Task 11 (per-tool orchestrator) will be the first external consumer.
-#[allow(dead_code)]
-pub(crate) fn fresh_tool_output_schema() -> JsonObject {
-    (**TOOL_OUTPUT_BASE_SCHEMA).clone()
 }
 
 #[cfg(test)]
@@ -92,7 +75,7 @@ mod tests {
         // Asserts presence of the brontes-required properties without locking
         // the schema's exhaustive member set — schemars 1.x can add new top-level
         // keys (e.g., $schema, title) and this test must remain tolerant of that.
-        let schema = fresh_tool_output_schema();
+        let schema = (**TOOL_OUTPUT_BASE_SCHEMA).clone();
         let props = schema
             .get("properties")
             .and_then(|v| v.as_object())

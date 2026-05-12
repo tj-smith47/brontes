@@ -4,7 +4,7 @@
 //! the types module exposes [`SchemaType`] for coarse flag-type classification
 //! and `Config.flag_type_overrides`.
 //!
-//! The orchestrator functions at the module root ([`build_input_schema`],
+//! The orchestrator functions at the module root ([`build_input_schema_with_matchers`],
 //! [`build_output_schema`], [`build_description`]) tie the sub-modules
 //! together into per-tool schemas and description strings ready for the MCP
 //! tool surface.
@@ -84,17 +84,6 @@ pub(crate) fn build_input_schema_with_matchers(
     Arc::new(schema)
 }
 
-/// Build the per-tool input schema for `cmd` with no flag filtering.
-///
-/// Convenience wrapper over [`build_input_schema_with_matchers`] that passes
-/// `None` for both flag matchers, including all flags.
-// Only called from tests in this module; the non-test path goes through
-// build_input_schema_with_matchers directly.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn build_input_schema(cmd: &Command, cfg: &Config, cmd_path: &str) -> Arc<JsonObject> {
-    build_input_schema_with_matchers(cmd, cfg, cmd_path, None, None)
-}
-
 /// Build the per-tool output schema.
 ///
 /// The `ToolOutput` shape (`stdout` / `stderr` / `exit_code`) does not vary
@@ -153,7 +142,7 @@ mod tests {
     fn input_schema_has_flags_and_args_properties() {
         let cmd = Command::new("test").arg(Arg::new("foo").long("foo"));
         let cfg = Config::default();
-        let schema = build_input_schema(&cmd, &cfg, "test");
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
         let props = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -166,7 +155,7 @@ mod tests {
     fn input_schema_flags_object_has_per_flag_property() {
         let cmd = Command::new("test").arg(Arg::new("foo").long("foo"));
         let cfg = Config::default();
-        let schema = build_input_schema(&cmd, &cfg, "test");
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
         let flags_props = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -185,7 +174,7 @@ mod tests {
     fn input_schema_flags_object_is_additional_properties_false() {
         let cmd = Command::new("test").arg(Arg::new("foo").long("foo"));
         let cfg = Config::default();
-        let schema = build_input_schema(&cmd, &cfg, "test");
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
         let flags_obj = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -225,7 +214,7 @@ mod tests {
     fn args_description_is_spliced_into_args_property() {
         let cmd = Command::new("test").arg(Arg::new("file").required(true));
         let cfg = Config::default();
-        let schema = build_input_schema(&cmd, &cfg, "test");
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
         let args_desc = schema
             .get("properties")
             .and_then(|v| v.as_object())
