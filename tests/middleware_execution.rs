@@ -39,11 +39,17 @@ impl rmcp::handler::client::ClientHandler for NoopClient {
     }
 }
 
-/// Build a tiny CLI with one leaf so the walker has something to surface.
+/// Build a tiny CLI for the middleware tests. `greet` is the primary leaf
+/// every test calls; `safe-greet` is a recovery target for the panic-
+/// isolation test — a non-panicking second tool lets that test prove the
+/// `call_tool` dispatch path itself recovered, not just the rmcp service
+/// boundary. Tests 1/2/4 use catch-all selectors that claim both, but they
+/// only `call_tool("brontes-mw_greet")` so the extra leaf is invisible.
 fn fixture_cli() -> Command {
     Command::new("brontes-mw")
         .version("0.0.1")
         .subcommand(Command::new("greet").about("Say hi"))
+        .subcommand(Command::new("safe-greet").about("Recovery target — no panic"))
 }
 
 /// Wire client and server over an in-memory duplex transport. Returns the
@@ -239,16 +245,37 @@ async fn middleware_ctx_carries_tool_name_input_and_token() {
 
 #[tokio::test]
 async fn middleware_panic_returns_tool_error_and_server_survives() {
-    let mw: Middleware = Arc::new(|_ctx: MiddlewareCtx, _next: BoxedNext| {
+    // Two cmd-scoped selectors: the first claims `greet` with panicking
+    // middleware, the second claims `safe-greet` with short-circuiting
+    // middleware. After the panic we send a second call_tool through the
+    // recovery path to prove the dispatch handler itself survived — not
+    // just the rmcp service boundary.
+    let panic_mw: Middleware = Arc::new(|_ctx: MiddlewareCtx, _next: BoxedNext| {
         Box::pin(async move {
             panic!("synthetic middleware panic for test");
         })
     });
-
-    let cfg = brontes::Config::default().selector(Selector {
-        middleware: Some(mw),
-        ..Default::default()
+    let recovery_mw: Middleware = Arc::new(|_ctx: MiddlewareCtx, _next: BoxedNext| {
+        Box::pin(async move {
+            Ok(ToolOutput {
+                stdout: "recovered\n".into(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        })
     });
+
+    let cfg = brontes::Config::default()
+        .selector(Selector {
+            cmd: Some(Arc::new(|p: &str| p == "brontes-mw greet")),
+            middleware: Some(panic_mw),
+            ..Default::default()
+        })
+        .selector(Selector {
+            cmd: Some(Arc::new(|p: &str| p == "brontes-mw safe-greet")),
+            middleware: Some(recovery_mw),
+            ..Default::default()
+        });
 
     let (client, cancel, server_task) = spin_up(cfg).await;
 
@@ -265,8 +292,7 @@ async fn middleware_panic_returns_tool_error_and_server_survives() {
         "panicking middleware must surface as tool_error; got {first:?}"
     );
 
-    // Second call: server must still be alive. Use tools/list because it
-    // doesn't go through middleware.
+    // Second action: tools/list verifies the rmcp service boundary survived.
     let list = client
         .peer()
         .list_tools(None)
@@ -276,7 +302,26 @@ async fn middleware_panic_returns_tool_error_and_server_survives() {
         list.tools
             .iter()
             .any(|t| t.name.as_ref() == "brontes-mw_greet"),
-        "expected tool still visible after panic; got {list:?}"
+        "expected panicking tool still visible after panic; got {list:?}"
+    );
+    assert!(
+        list.tools
+            .iter()
+            .any(|t| t.name.as_ref() == "brontes-mw_safe-greet"),
+        "expected recovery tool visible; got {list:?}"
+    );
+
+    // Third call: a non-panicking tool. Proves the call_tool dispatch path
+    // itself recovered, not just the service boundary.
+    let recovered = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("brontes-mw_safe-greet"))
+        .await
+        .expect("call_tool after panic must succeed");
+    assert_eq!(
+        recovered.is_error,
+        Some(false),
+        "post-panic call_tool must succeed; got {recovered:?}"
     );
 
     shutdown(client, cancel, server_task).await;
