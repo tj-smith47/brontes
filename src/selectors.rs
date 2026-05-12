@@ -122,7 +122,11 @@ fn register<T: ?Sized + Send + Sync + 'static>(arc: &Arc<T>, spec: MatcherSpec) 
     let key = Arc::as_ptr(arc).cast::<()>() as usize;
     let weak = Arc::downgrade(arc);
     // `strong_count() > 0` avoids the temporary Arc allocation that
-    // `Weak::upgrade()` would require on every lookup.
+    // `Weak::upgrade()` would require on every lookup. The read is
+    // non-atomic per `std::sync::Weak::strong_count`, but the registry is
+    // mutated only under `MATCHER_REGISTRY`'s `Mutex` and consumers build
+    // their `Config` from a single thread at startup, so the racy view is
+    // not observable in practice.
     let alive: LivenessCheck = Box::new(move || weak.strong_count() > 0);
     MATCHER_REGISTRY
         .lock()
@@ -514,31 +518,14 @@ mod tests {
         );
     }
 
-    /// Verifies the eviction step in [`lookup`]: after the original
-    /// factory `Arc` has been dropped, the registry must not retain its
-    /// entry once that key is probed again.
-    ///
-    /// We can observe eviction without a test-only helper by:
-    /// 1. Recording the registry's size before the factory call.
-    /// 2. Calling a factory and snapshotting the key.
-    /// 3. Dropping the `Arc`.
-    /// 4. Constructing a synthetic `Arc` and feeding `lookup` an Arc
-    ///    whose pointer happens to be the recorded key — except we
-    ///    cannot construct such an Arc without `unsafe`. Instead we
-    ///    simply observe that calling `lookup` with the original key via
-    ///    a probe-Arc whose pointer happens to collide is unreliable;
-    ///    eviction is therefore exercised indirectly through the
-    ///    [`dropped_factory_arc_does_not_alias_hand_written_closure`]
-    ///    test above on every pointer-reuse hit.
-    ///
-    /// What we *can* check directly: the registry's `Mutex` does not
-    /// poison and a single round-trip through `register` + drop +
-    /// lookup-via-clone behaves correctly for a live entry.
+    /// Verifies a live `Arc`'s registry entry survives unrelated
+    /// allocator churn — eviction must only fire on stale keys, not on
+    /// collateral collisions.
     #[test]
-    fn live_arc_clone_still_resolves_after_intermediate_drops() {
+    fn live_arc_survives_intermediate_factory_churn() {
         let m = allow_cmds(["sticky"]);
-        // Churn the allocator: many short-lived registrations sandwich
-        // the live `m`. None of these may evict `m`'s entry.
+        // 256 churn iterations — enough to reuse the slot multiple times
+        // in practice without bloating CI time.
         for _ in 0..256 {
             let _ = exclude_flags(["churn"]);
         }
