@@ -15,7 +15,7 @@ A Taskfile is provided for common workflows.
 
 ```bash
 task           # list available tasks
-task ci        # full local CI sweep (fmt, clippy, test, doc, audit)
+task ci        # full local CI sweep (fmt, clippy, test, doc, audit, deny)
 task fmt       # cargo fmt
 task clippy    # cargo clippy with -D warnings
 task test      # cargo test
