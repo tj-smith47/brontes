@@ -30,15 +30,13 @@
 /// use brontes::ToolInput;
 /// use serde_json::json;
 ///
+/// let mut flags = serde_json::Map::new();
+/// flags.insert("log-level".into(), json!("debug"));
+/// flags.insert("output".into(), json!("results.json"));
+///
 /// let input = ToolInput {
-///     flags: [
-///         ("log-level".to_string(), json!("debug")),
-///         ("output".to_string(), json!("results.json")),
-///     ]
-///     .iter()
-///     .cloned()
-///     .collect(),
-///     args: vec!["file1.txt".to_string(), "file2.txt".to_string()],
+///     flags,
+///     args: vec!["file1.txt".into(), "file2.txt".into()],
 /// };
 /// ```
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -58,10 +56,12 @@ pub struct ToolInput {
 ///
 /// - `stdout`: The captured standard output from the subprocess.
 /// - `stderr`: The captured standard error from the subprocess.
-/// - `exit_code`: The process exit code as an `i32`. On Unix systems, when a
-///   process is killed by a signal and the OS does not yield an exit code,
-///   the value `-1` is used as a sentinel. This matches the behavior of
-///   `std::process::ExitStatus::code()`, which returns `Option<i32>`.
+/// - `exit_code`: The process exit code as an `i32`. When the underlying
+///   [`std::process::ExitStatus::code`] returns `None` (the process was
+///   killed by a signal and the OS did not yield an exit code), brontes
+///   flattens that to the sentinel value `-1`. Consumers that need to
+///   distinguish "killed by signal" from "exited with -1 deliberately"
+///   should inspect the stderr output instead.
 ///
 /// # Serialization
 ///
@@ -85,7 +85,9 @@ pub struct ToolOutput {
     pub stdout: String,
     /// Standard error captured from the subprocess.
     pub stderr: String,
-    /// Process exit code, or `-1` if killed by signal and no code available.
+    /// Process exit code. The sentinel value `-1` indicates the process was
+    /// killed by signal and the OS did not yield an exit code (flattened from
+    /// [`std::process::ExitStatus::code`] returning `None`).
     pub exit_code: i32,
 }
 
@@ -108,6 +110,7 @@ mod tests {
         let input = ToolInput::default();
         let json = to_value(&input).expect("serialize");
         let obj = json.as_object().expect("is object");
+        assert_eq!(obj.len(), 2, "ToolInput must have exactly 2 fields");
         assert!(obj.contains_key("flags"), "flags field must be present");
         assert!(obj.contains_key("args"), "args field must be present");
         assert!(
