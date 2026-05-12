@@ -84,19 +84,32 @@ pub type FlagMatcher = Arc<dyn Fn(&clap::Arg) -> bool + Send + Sync>;
 ///
 /// # Example
 ///
-/// ```rust
-/// use brontes::{MiddlewareCtx, ToolInput};
-/// use tokio_util::sync::CancellationToken;
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use brontes::{BoxedNext, Middleware, MiddlewareCtx};
 ///
-/// let ctx = MiddlewareCtx {
-///     cancellation_token: CancellationToken::new(),
-///     tool_name: "my-cli_deploy_prod".into(),
-///     input: ToolInput::default(),
-/// };
-/// let cloned = ctx.clone();
-/// assert_eq!(cloned.tool_name, "my-cli_deploy_prod");
+/// // Middleware receives a `MiddlewareCtx` from brontes — it does not
+/// // construct one itself.
+/// let mw: Middleware = Arc::new(|ctx: MiddlewareCtx, next: BoxedNext| {
+///     Box::pin(async move {
+///         let tool = ctx.tool_name.clone();
+///         let result = next(ctx).await;
+///         tracing::debug!(%tool, "after call");
+///         result
+///     })
+/// });
+/// # let _ = mw;
 /// ```
+///
+/// # Forward compatibility
+///
+/// `MiddlewareCtx` is `#[non_exhaustive]`. Downstream code receives a
+/// `MiddlewareCtx` value from brontes (as the first argument to a
+/// [`Middleware`] closure); it does not construct one directly. Additional
+/// per-call fields (request id, parameters, etc.) may be added in minor
+/// releases without bumping the major version.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MiddlewareCtx {
     /// Fires when the MCP client cancels the in-flight request.
     pub cancellation_token: CancellationToken,

@@ -50,7 +50,16 @@ use crate::selector::Selector;
 ///     .command_name("agent")
 ///     .log_level(tracing::Level::INFO);
 /// ```
+///
+/// # Forward compatibility
+///
+/// `Config` is `#[non_exhaustive]`. Construct it via [`Config::default()`] and
+/// the fluent builder methods on this type — never via struct-literal syntax
+/// (`Config { .. }`) from outside this crate. New fields may be added in
+/// minor releases without bumping the major version; the builder methods are
+/// the stable surface.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct Config {
     /// The subcommand name brontes registers on the user's CLI.
     ///
