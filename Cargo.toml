@@ -94,3 +94,7 @@ module_name_repetitions = "allow"
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "make-mcp"
+path = "examples/make-mcp/main.rs"
