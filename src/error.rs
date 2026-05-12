@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 /// Errors produced by brontes.
 ///
-/// `Error` implements [`std::process::Termination`] so a `Result<(), brontes::Error>`
-/// returned from `main` yields a non-zero exit code automatically.
+/// Pair with `Result<(), Error>` in `main` to get Rust's default
+/// `Termination` behavior (debug-print the error and exit non-zero).
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -84,13 +84,6 @@ pub enum Error {
 
 /// Result alias for fallible brontes operations.
 pub type Result<T> = std::result::Result<T, Error>;
-
-impl std::process::Termination for Error {
-    fn report(self) -> std::process::ExitCode {
-        eprintln!("{self}");
-        std::process::ExitCode::from(1)
-    }
-}
 
 #[cfg(test)]
 mod tests {

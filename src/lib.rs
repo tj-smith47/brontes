@@ -6,8 +6,10 @@
 //!
 //! # Status
 //!
-//! Phase 0 scaffold. The public surface is intentionally empty at this revision;
-//! see the project's PLAN for the phased rollout.
+//! Phase 1 in progress. The public surface currently exports the crate's
+//! [`Error`] and [`Result`] types. The MCP-tool generation surface
+//! (`generate_tools`) and the `mcp` subcommand tree land in subsequent
+//! Phase 1 / Phase 2 commits.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -15,7 +17,6 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 
-// Phase 0: `Error` and `Result` are defined here for Phase 1+ wiring and are
-// covered by unit tests, but no public API is yet exported.
-#[allow(dead_code)]
 mod error;
+
+pub use error::{Error, Result};
