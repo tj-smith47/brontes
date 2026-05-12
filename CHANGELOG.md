@@ -7,4 +7,4 @@ All notable changes to this project are documented here. Format adapted from [Ke
 ### Added
 - Initial repository scaffold: Cargo.toml, README, LICENSE, CI baseline, Taskfile, CONTRIBUTING.
 
-[Unreleased]: https://github.com/tj-smith47/brontes/compare/main...HEAD
+[Unreleased]: https://github.com/tj-smith47/brontes/compare/master...HEAD
