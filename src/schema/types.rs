@@ -5,6 +5,9 @@
 //! per-flag schema object.
 
 use std::any::TypeId;
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Coarse JSON Schema type for a clap flag.
 ///
@@ -53,44 +56,56 @@ impl SchemaType {
     }
 }
 
-/// Look up the [`SchemaType`] for a known `value_parser!` target type.
-///
-/// Returns `None` for parser types brontes does not recognise — the flag
-/// mapper falls back to [`SchemaType::String`] and emits a
-/// `tracing::debug!` in that case.
+/// All `value_parser!` target types brontes recognises, paired with the
+/// [`SchemaType`] they classify to. Single source of truth — both
+/// [`schema_type_for_type_id`] (TypeId-keyed) and the clap-`AnyValueId`
+/// classifier in `schema::flag` walk this table.
 ///
 /// Covered types (per PLAN §5.1 mapping table):
 /// - `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, `usize` → [`SchemaType::Integer`]
 /// - `f32`, `f64` → [`SchemaType::Number`]
 /// - `bool` → [`SchemaType::Boolean`]
 /// - [`String`] → [`SchemaType::String`]
-/// - [`std::path::PathBuf`], [`std::ffi::OsString`] → [`SchemaType::StringPath`]
-// Task 9 (flag-to-schema mapper) will be the first external consumer.
+/// - [`PathBuf`], [`OsString`] → [`SchemaType::StringPath`]
+pub(crate) fn known_type_classifications() -> &'static [(TypeId, SchemaType)] {
+    static TABLE: OnceLock<Vec<(TypeId, SchemaType)>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        vec![
+            (TypeId::of::<i8>(), SchemaType::Integer),
+            (TypeId::of::<i16>(), SchemaType::Integer),
+            (TypeId::of::<i32>(), SchemaType::Integer),
+            (TypeId::of::<i64>(), SchemaType::Integer),
+            (TypeId::of::<isize>(), SchemaType::Integer),
+            (TypeId::of::<u8>(), SchemaType::Integer),
+            (TypeId::of::<u16>(), SchemaType::Integer),
+            (TypeId::of::<u32>(), SchemaType::Integer),
+            (TypeId::of::<u64>(), SchemaType::Integer),
+            (TypeId::of::<usize>(), SchemaType::Integer),
+            (TypeId::of::<f32>(), SchemaType::Number),
+            (TypeId::of::<f64>(), SchemaType::Number),
+            (TypeId::of::<bool>(), SchemaType::Boolean),
+            (TypeId::of::<String>(), SchemaType::String),
+            (TypeId::of::<PathBuf>(), SchemaType::StringPath),
+            (TypeId::of::<OsString>(), SchemaType::StringPath),
+        ]
+    })
+}
+
+/// Look up the [`SchemaType`] for a known `value_parser!` target type.
+///
+/// Returns `None` for parser types brontes does not recognise — the flag
+/// mapper falls back to [`SchemaType::String`] and emits a
+/// `tracing::debug!` in that case.
+///
+/// Consults [`known_type_classifications`]; add new types there to cover
+/// both this function and the clap-`AnyValueId` path in `schema::flag`.
+// Used by the test suite below; future modules with TypeId-keyed lookups
+// may consume this directly.
 #[allow(dead_code)]
 pub(crate) fn schema_type_for_type_id(id: TypeId) -> Option<SchemaType> {
-    if id == TypeId::of::<i8>()
-        || id == TypeId::of::<i16>()
-        || id == TypeId::of::<i32>()
-        || id == TypeId::of::<i64>()
-        || id == TypeId::of::<isize>()
-        || id == TypeId::of::<u8>()
-        || id == TypeId::of::<u16>()
-        || id == TypeId::of::<u32>()
-        || id == TypeId::of::<u64>()
-        || id == TypeId::of::<usize>()
-    {
-        Some(SchemaType::Integer)
-    } else if id == TypeId::of::<f32>() || id == TypeId::of::<f64>() {
-        Some(SchemaType::Number)
-    } else if id == TypeId::of::<bool>() {
-        Some(SchemaType::Boolean)
-    } else if id == TypeId::of::<String>() {
-        Some(SchemaType::String)
-    } else if id == TypeId::of::<std::path::PathBuf>() || id == TypeId::of::<std::ffi::OsString>() {
-        Some(SchemaType::StringPath)
-    } else {
-        None
-    }
+    known_type_classifications()
+        .iter()
+        .find_map(|&(ty, schema)| (ty == id).then_some(schema))
 }
 
 #[cfg(test)]

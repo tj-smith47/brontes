@@ -4,14 +4,13 @@
 //! dedup, excludes hidden flags, and produces a `(properties, required)`
 //! pair ready to splice into the per-tool input schema.
 
-use std::any::TypeId;
 use std::collections::HashSet;
 
 use clap::{Arg, ArgAction, Command};
 use serde_json::{Map, Value, json};
 
 use crate::config::Config;
-use crate::schema::types::{SchemaType, schema_type_for_type_id};
+use crate::schema::types::{SchemaType, known_type_classifications};
 
 /// Walk `cmd`'s args (local first, inherited second; dedup by id) and
 /// build a `(properties_map, required_list)` ready to splice into the
@@ -161,7 +160,7 @@ fn build_arg_schema(arg: &Arg, cfg: &Config, cmd_path: &str) -> Map<String, Valu
 /// 1. `cfg.flag_type_overrides` — user-supplied override wins.
 /// 2. `ArgAction` — `SetTrue`/`SetFalse` → Boolean; `Count` → Integer;
 ///    `Append` → Array.
-/// 3. `value_parser` type id via `schema_type_for_type_id`.
+/// 3. `value_parser` type id via [`known_type_classifications`].
 /// 4. Fallback to `String`, emitting a `tracing::debug!`.
 #[allow(dead_code)]
 fn classify(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
@@ -196,16 +195,18 @@ fn classify(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
 fn classify_array_item(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
     let name = arg.get_id().as_str();
 
-    // Explicit override takes precedence.
+    // Explicit override takes precedence for the item type. If the override
+    // was set to Array (i.e. it named the outer container, not the item), fall
+    // through to the TypeId classifier below, which correctly returns the
+    // scalar SchemaType (Integer / Number / StringPath / etc.) for all
+    // well-known parsers. The fallback for unknown parsers is
+    // SchemaType::String, which serialises as `{"type": "string"}` items.
     if let Some(&ty) = cfg
         .flag_type_overrides
         .get(&(cmd_path.to_owned(), name.to_owned()))
+        && ty != SchemaType::Array
     {
-        // The override may have been set to Array for the outer flag — in that
-        // case we can't know the item type; fall through to type-id lookup.
-        if ty != SchemaType::Array {
-            return ty;
-        }
+        return ty;
     }
 
     classify_by_type_id(arg, cmd_path)
@@ -213,55 +214,25 @@ fn classify_array_item(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
 
 /// Look up the [`SchemaType`] from the arg's value parser type id, falling
 /// back to `String` with a debug log when the type is unrecognised.
+///
+/// Walks [`known_type_classifications`] comparing each entry's [`TypeId`]
+/// against the arg's `AnyValueId` via `PartialEq<TypeId>` — no macro
+/// needed, and no duplicate table to maintain.
 #[allow(dead_code)]
 fn classify_by_type_id(arg: &Arg, cmd_path: &str) -> SchemaType {
-    let name = arg.get_id().as_str();
-    let any_id = arg.get_value_parser().type_id();
+    let parser_id = arg.get_value_parser().type_id();
 
-    // AnyValueId implements PartialEq<std::any::TypeId>, so we can compare
-    // directly without naming the opaque AnyValueId type.
-    macro_rules! is_type {
-        ($t:ty) => {
-            any_id == TypeId::of::<$t>()
-        };
+    // AnyValueId implements PartialEq<TypeId>, so the comparison works
+    // without naming the opaque AnyValueId type.
+    for &(known_ty, schema) in known_type_classifications() {
+        if parser_id == known_ty {
+            return schema;
+        }
     }
-
-    if is_type!(i8)
-        || is_type!(i16)
-        || is_type!(i32)
-        || is_type!(i64)
-        || is_type!(isize)
-        || is_type!(u8)
-        || is_type!(u16)
-        || is_type!(u32)
-        || is_type!(u64)
-        || is_type!(usize)
-    {
-        return SchemaType::Integer;
-    }
-    if is_type!(f32) || is_type!(f64) {
-        return SchemaType::Number;
-    }
-    if is_type!(bool) {
-        return SchemaType::Boolean;
-    }
-    if is_type!(String) {
-        return SchemaType::String;
-    }
-    if is_type!(std::path::PathBuf) || is_type!(std::ffi::OsString) {
-        return SchemaType::StringPath;
-    }
-
-    // Also try schema_type_for_type_id for any future covered types.
-    //
-    // Note: we cannot extract a bare TypeId from AnyValueId (it is
-    // pub(crate) to clap), so we do the comparison inline above and fall
-    // through to the debug log below if none matched.
-    let _ = schema_type_for_type_id; // suppress dead_code warning
 
     tracing::debug!(
         target: "brontes::schema::flag",
-        flag = name,
+        flag = arg.get_id().as_str(),
         cmd_path,
         "unrecognized value parser; falling back to string"
     );
@@ -518,6 +489,12 @@ mod tests {
     fn flag_type_overrides_nudges_classify() {
         // The arg uses value_parser!(String) which would normally classify as
         // SchemaType::String. The override nudges it to Array.
+        //
+        // Because build_arg_schema enters the Array branch for any Array
+        // coarse_type (override or action-based), it calls classify_array_item
+        // to determine the item type. For a value_parser!(String) arg,
+        // classify_array_item resolves to SchemaType::String via the TypeId
+        // lookup, so items: {"type": "string"} is always present.
         let mut cfg = Config::default();
         cfg.flag_type_overrides
             .insert(("my-cli".to_owned(), "tags".to_owned()), SchemaType::Array);
@@ -534,6 +511,13 @@ mod tests {
             prop["type"],
             json!("array"),
             "type override must produce array"
+        );
+        // The item type is resolved from the value parser (String → "string")
+        // even when the outer type is forced to Array via an override.
+        assert_eq!(
+            prop["items"],
+            json!({"type": "string"}),
+            "items must reflect the value_parser scalar type"
         );
     }
 }
