@@ -1,4 +1,4 @@
-//! Recursive walker for a `clap::Command` tree.
+//! Iterative depth-first walker for a `clap::Command` tree.
 //!
 //! Produces a flat list of [`ResolvedCmd`] entries — each carrying a
 //! reference to the underlying [`clap::Command`], the full space-joined
@@ -6,15 +6,15 @@
 //! (annotations, deprecated commands, flag-schema overrides) use the
 //! `path` string built here, since clap commands have no parent pointer.
 
-// `ResolvedCmd`, `walk`, `should_filter`, and `is_group_only` are
-// scaffolded for use by the tool-generation layer (not yet wired up).
-#![allow(dead_code)]
-
 use clap::Command;
 
 use crate::config::Config;
 
 /// A clap command with the path brontes derives by walking from the root.
+///
+/// Consumed by `generate_tools` to apply selectors and assemble the MCP tool
+/// list; the allow lifts when that wiring lands.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct ResolvedCmd<'a> {
     /// The clap command this entry refers to.
@@ -27,26 +27,31 @@ pub(crate) struct ResolvedCmd<'a> {
 
 /// Walk the clap tree depth-first, producing a flat `Vec` of resolved
 /// entries. The root command is included as the first entry.
+///
+/// Subcommands are visited in reverse registration order (the iterative DFS
+/// pushes them onto a stack and pops). Order is deterministic across runs.
+#[allow(dead_code)]
 pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
     let mut out = Vec::new();
     let mut stack: Vec<(&Command, Vec<&str>)> = vec![(root, vec![root.get_name()])];
     while let Some((cmd, parts)) = stack.pop() {
-        out.push(ResolvedCmd {
-            cmd,
-            path: parts.join(" "),
-            parts: parts.clone(),
-        });
+        let path = parts.join(" ");
         for sub in cmd.get_subcommands() {
             let mut p = parts.clone();
             p.push(sub.get_name());
             stack.push((sub, p));
         }
+        out.push(ResolvedCmd { cmd, path, parts });
     }
     out
 }
 
 /// Per the filter order: hidden → deprecated → group-only → substring.
 /// Returns `true` if `cmd` should be EXCLUDED from the tool list.
+///
+/// Consumed by `generate_tools` to apply selectors and assemble the MCP tool list;
+/// the allow lifts when that wiring lands.
+#[allow(dead_code)]
 pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
     // 1. Hidden commands are never exposed as tools.
     if cmd.is_hide_set() {
@@ -70,6 +75,11 @@ pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
     //    the full space-joined path so that `myapp mcp install` is caught when
     //    `command_name == "mcp"`.
     let command_name = cfg.command_name.as_deref().unwrap_or("mcp");
+    // Substring (not exact-match) by design — matches the ophis filter shape.
+    // Consequence: a user command named "helpful" or "completion-server" will be
+    // filtered because "help" / "completion" appear as substrings. Escape hatch for
+    // the `command_name` token: rename via `Config.command_name` (the user-facing
+    // knob that exists precisely for this).
     let needles = [command_name, "help", "completion"];
     if needles.iter().any(|n| path.contains(n)) {
         return true;
@@ -81,6 +91,10 @@ pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
 /// A group-only command requires a subcommand AND defines no user-facing
 /// arguments. clap auto-injects `--help` (and `--version` on the root when
 /// `Command::version` is set); those ids are excluded from the count.
+///
+/// Consumed by `should_filter` to identify navigation-only nodes; the allow lifts
+/// when the filter is fully wired into `generate_tools`.
+#[allow(dead_code)]
 fn is_group_only(cmd: &Command) -> bool {
     let requires_sub = cmd.is_subcommand_required_set();
     let user_args_count = cmd
@@ -163,10 +177,9 @@ mod tests {
 
     // ── TestCmdFilter parity port (ophis config_test.go::TestCmdFilter) ───
     //
-    // Dropped row: "no run cmd" — ophis filters cobra commands whose Run
-    // field is nil (i.e. navigation-only nodes). clap has no equivalent
-    // "run function" field; the group-only rule (is_group_only) covers the
-    // navigation-node case. See PLAN §11 for the explicit non-port decision.
+    // Dropped row: "no run cmd" — ophis filters cobra commands whose Run field is
+    // nil (i.e. navigation-only nodes). clap has no equivalent "run function" field;
+    // the group-only rule (is_group_only) covers the navigation-node case.
 
     #[test]
     fn passing_cmd_not_filtered() {
@@ -236,5 +249,29 @@ mod tests {
     fn command_name_defaults_to_mcp_when_unset() {
         let cfg = Config::default();
         assert_eq!(cfg.command_name.as_deref().unwrap_or("mcp"), "mcp");
+    }
+
+    // ── Substring quirk: false positives on similar names ──────────────────
+
+    #[test]
+    fn substring_filter_catches_inner_help_token() {
+        // Pin the substring-not-exact-match quirk: a command named "helpful" is
+        // filtered because "help" appears in its path.
+        let cmd = Command::new("helpful");
+        let cfg = Config::default();
+        assert!(
+            should_filter(&cmd, "myapp helpful", &cfg),
+            "substring 'help' matches inside 'helpful' — intentional quirk"
+        );
+    }
+
+    #[test]
+    fn substring_filter_catches_inner_completion_token() {
+        let cmd = Command::new("completionish");
+        let cfg = Config::default();
+        assert!(
+            should_filter(&cmd, "myapp completionish", &cfg),
+            "substring 'completion' matches inside 'completionish' — intentional quirk"
+        );
     }
 }
