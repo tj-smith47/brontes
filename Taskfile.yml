@@ -52,14 +52,14 @@ tasks:
       - cargo deny check
 
   ci:
-    desc: Full local CI sweep (fmt, clippy, test, doc, audit, deny)
+    desc: Full local CI sweep (fmt, clippy, test, audit, deny, doc)
     cmds:
       - task: fmt:check
       - task: clippy
       - task: test
-      - task: doc
       - task: audit
       - task: deny
+      - task: doc
 
   commit:
     desc: Run the pre-commit chain (fmt + clippy + test) then commit. Pass commit args via --.

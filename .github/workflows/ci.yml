@@ -84,8 +84,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install --locked cargo-audit
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - run: cargo audit
 
   # Linux-only: reads deny.toml + Cargo.lock, OS-independent policy check.
@@ -94,6 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install --locked cargo-deny
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
       - run: cargo deny check
