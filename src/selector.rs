@@ -143,17 +143,33 @@ pub type BoxedNext = Box<dyn FnOnce(MiddlewareCtx) -> BoxFuture<'static, Middlew
 /// `Arc`, a single instance can be shared across concurrent async tasks at
 /// no extra allocation cost.
 ///
+/// # Lifetime
+///
+/// `BoxedNext` and `Middleware` both return `BoxFuture<'static, _>`, which
+/// means any data a middleware closure references after `next(ctx).await`
+/// must be owned or `Arc`-shared — not borrowed from `ctx`. `MiddlewareCtx`
+/// derives `Clone` precisely so a middleware can keep a copy locally before
+/// moving the original into `next`:
+///
+/// ```ignore
+/// let ctx_for_logging = ctx.clone();
+/// let result = next(ctx).await;
+/// tracing::debug!(tool = %ctx_for_logging.tool_name, ?result, "middleware post-call");
+/// result
+/// ```
+///
 /// # Example
 ///
 /// ```rust,no_run
 /// use std::sync::Arc;
 /// use brontes::{Middleware, MiddlewareCtx, BoxedNext};
+/// # use tracing::debug;
 ///
 /// let mw: Middleware = Arc::new(|ctx: MiddlewareCtx, next: BoxedNext| {
 ///     Box::pin(async move {
-///         println!("before: {}", ctx.tool_name);
+///         debug!("before: {}", ctx.tool_name);
 ///         let result = next(ctx).await;
-///         println!("after");
+///         debug!("after");
 ///         result
 ///     })
 /// });
@@ -254,6 +270,12 @@ mod tests {
         assert!(m2("foo bar"));
         assert!(!m1("baz qux"));
         assert!(!m2("baz qux"));
+
+        // Verify that the clone shares the Arc allocation, not a copy.
+        assert!(
+            Arc::ptr_eq(sel.cmd.as_ref().unwrap(), sel2.cmd.as_ref().unwrap()),
+            "clone must share Arc allocation, not produce a copy"
+        );
     }
 
     #[test]
@@ -288,21 +310,16 @@ mod tests {
         };
         let s = format!("{sel:?}");
         assert!(
+            s.contains("Some(<fn>)"),
+            "Debug should label Some-slots as Some(<fn>): got {s}"
+        );
+        assert!(
+            s.contains("None"),
+            "Debug should label None-slots as None: got {s}"
+        );
+        assert!(
             s.contains("Selector"),
-            "debug output must contain 'Selector'"
-        );
-        assert!(s.contains("cmd"), "debug output must mention 'cmd'");
-        assert!(
-            s.contains("local_flag"),
-            "debug output must mention 'local_flag'"
-        );
-        assert!(
-            s.contains("inherited_flag"),
-            "debug output must mention 'inherited_flag'"
-        );
-        assert!(
-            s.contains("middleware"),
-            "debug output must mention 'middleware'"
+            "Debug should name the type: got {s}"
         );
     }
 
