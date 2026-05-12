@@ -164,11 +164,23 @@ pub type BoxedNext = Box<dyn FnOnce(MiddlewareCtx) -> BoxFuture<'static, Middlew
 /// derives `Clone` precisely so a middleware can keep a copy locally before
 /// moving the original into `next`:
 ///
-/// ```ignore
-/// let ctx_for_logging = ctx.clone();
-/// let result = next(ctx).await;
-/// tracing::debug!(tool = %ctx_for_logging.tool_name, ?result, "middleware post-call");
-/// result
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use brontes::{BoxedNext, Middleware, MiddlewareCtx};
+///
+/// let mw: Middleware = Arc::new(|ctx: MiddlewareCtx, next: BoxedNext| {
+///     Box::pin(async move {
+///         let ctx_for_logging = ctx.clone();
+///         let result = next(ctx).await;
+///         tracing::debug!(
+///             tool = %ctx_for_logging.tool_name,
+///             ok = result.is_ok(),
+///             "middleware post-call",
+///         );
+///         result
+///     })
+/// });
+/// # let _ = mw;
 /// ```
 ///
 /// # Example
