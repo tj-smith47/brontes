@@ -23,6 +23,7 @@ mod schema;
 mod selector;
 pub mod selectors;
 mod tool;
+mod walk;
 
 pub use annotations::ToolAnnotations;
 pub use config::Config;
