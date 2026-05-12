@@ -46,6 +46,12 @@ thiserror = "2"
 async-trait = "0.1"
 futures = "0.3"
 tempfile = "3"
+# Per-OS home/config directory resolution for editor-config file paths
+# (Claude Desktop / VSCode / Cursor under `manager/paths.rs`). The
+# documented Rust analog of Go's `os.UserHomeDir()` — used as the home
+# resolver; an unresolved home triggers the per-row fallback chain
+# documented in PLAN.md §3.1.
+dirs = "5"
 # HTTP runtime for the `mcp stream` streamable-HTTP transport. The rmcp
 # `StreamableHttpService` is `tower_service::Service<Request<Incoming>>`;
 # we wire it directly to hyper's per-connection serve loop and use

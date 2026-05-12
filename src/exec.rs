@@ -67,7 +67,7 @@ static EXECUTABLE_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Returns [`Error::Io`] if [`std::env::current_exe`] fails. The first
 /// successful resolution is cached; subsequent calls are infallible
 /// clones of the cached `PathBuf`.
-fn current_executable() -> Result<PathBuf> {
+pub(crate) fn current_executable() -> Result<PathBuf> {
     if let Some(p) = EXECUTABLE_PATH.get() {
         return Ok(p.clone());
     }

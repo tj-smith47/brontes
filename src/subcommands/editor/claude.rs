@@ -1,0 +1,231 @@
+//! `mcp claude {enable, disable, list}` clap surface and dispatch.
+//!
+//! Mirrors ophis `internal/cfgmgr/cmd/claude/{root,enable,disable,list}.go`
+//! with the divergences pinned by PLAN.md §11:
+//!
+//! - No emoji prefix on the existing-server / disable-missing warnings.
+//! - JSON server map is a [`BTreeMap`] for byte-stable on-disk output.
+//!
+//! Path resolution defers to [`crate::manager::paths::claude_config_path`]
+//! per OS. The captured executable path is the cached
+//! [`crate::exec::current_executable`] value so the same binary path that
+//! tool calls spawn is the one written into Claude's config.
+
+use clap::{ArgMatches, Command};
+
+use crate::Result;
+use crate::config::Config;
+use crate::manager::Manager;
+use crate::manager::claude::{ClaudeConfig, ClaudeServer};
+
+use super::{arg_config_path, arg_env, arg_log_level, arg_server_name, merge_env};
+
+/// Build the `claude` subcommand (parent of `enable` / `disable` / `list`).
+///
+/// Registered under the `mcp` group by [`crate::subcommands::build`]; the
+/// dispatcher in [`crate::command::handle`] routes the matched leaf into
+/// [`run`].
+pub(crate) fn build() -> Command {
+    Command::new("claude")
+        .about("Manage Claude Desktop MCP servers")
+        .long_about("Manage MCP server configuration for Claude Desktop")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("enable")
+                .about("Add this CLI as an MCP server in Claude Desktop")
+                .arg(arg_config_path())
+                .arg(arg_server_name())
+                .arg(arg_env())
+                .arg(arg_log_level()),
+        )
+        .subcommand(
+            Command::new("disable")
+                .about("Remove this CLI from Claude Desktop's MCP servers")
+                .arg(arg_config_path())
+                .arg(arg_server_name()),
+        )
+        .subcommand(
+            Command::new("list")
+                .about("List MCP servers configured in Claude Desktop")
+                .arg(arg_config_path()),
+        )
+}
+
+/// Dispatch a parsed `claude` match to the right leaf.
+///
+/// `matches` is the `ArgMatches` of the `claude` subcommand itself; the
+/// dispatcher inspects the next level (`enable` / `disable` / `list`)
+/// internally. `cfg` carries [`Config::default_env`] which is merged with
+/// any `--env` flags at enable time.
+///
+/// # Errors
+///
+/// - [`crate::Error::Config`] when the `--env` flag is malformed or when
+///   the leaf is unknown / absent.
+/// - [`crate::Error::Io`] when [`std::env::current_exe`] fails.
+/// - [`crate::Error::EditorConfigRead`] / `Parse` / `Backup` / `Write`
+///   when the underlying [`Manager`] hits a filesystem error.
+pub(crate) fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
+    match matches.subcommand() {
+        Some(("enable", sub)) => run_enable(sub, cfg),
+        Some(("disable", sub)) => run_disable(sub),
+        Some(("list", sub)) => run_list(sub),
+        Some((other, _)) => Err(crate::Error::Config(format!(
+            "unknown mcp claude subcommand: {other:?}"
+        ))),
+        None => Err(crate::Error::Config(
+            "no mcp claude subcommand selected; pass --help to see options".into(),
+        )),
+    }
+}
+
+fn run_enable(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
+    let path = resolve_config_path(matches);
+
+    // Build the env map: start with default_env, overlay --env KEY=VAL.
+    let user_pairs: Vec<String> = matches
+        .get_many::<String>("env")
+        .map(|vals| vals.cloned().collect())
+        .unwrap_or_default();
+    let default_env = cfg.map(|c| c.default_env.clone()).unwrap_or_default();
+    let env = merge_env(&default_env, &user_pairs)?;
+
+    // Resolve the executable path once, cached via OnceLock in exec.rs.
+    let exe = crate::exec::current_executable()?;
+    let server_name = resolve_server_name(matches, &exe);
+
+    // Construct the argv tail that Claude Desktop will spawn:
+    // `<exe> mcp start [--log-level LEVEL]`.
+    let mut args: Vec<String> = vec!["mcp".to_string(), "start".to_string()];
+    if let Some(level) = matches.get_one::<String>("log-level") {
+        args.push("--log-level".to_string());
+        args.push(level.clone());
+    }
+
+    let server = ClaudeServer {
+        command: exe.to_string_lossy().into_owned(),
+        args: Some(args),
+        env,
+    };
+
+    let mut manager: Manager<ClaudeConfig> = Manager::load(path)?;
+    manager.enable_server(&server_name, server)
+}
+
+fn run_disable(matches: &ArgMatches) -> Result<()> {
+    let path = resolve_config_path(matches);
+    let exe = crate::exec::current_executable()?;
+    let server_name = resolve_server_name(matches, &exe);
+    let mut manager: Manager<ClaudeConfig> = Manager::load(path)?;
+    manager.disable_server(&server_name)
+}
+
+fn run_list(matches: &ArgMatches) -> Result<()> {
+    let path = resolve_config_path(matches);
+    let manager: Manager<ClaudeConfig> = Manager::load(path)?;
+    println!("Claude Desktop MCP servers:");
+    manager.print();
+    Ok(())
+}
+
+/// Resolve the config path: `--config-path` override if present, otherwise
+/// the per-OS default from [`crate::manager::paths::claude_config_path`].
+fn resolve_config_path(matches: &ArgMatches) -> std::path::PathBuf {
+    matches.get_one::<String>("config-path").map_or_else(
+        crate::manager::paths::claude_config_path,
+        std::path::PathBuf::from,
+    )
+}
+
+/// Resolve the server name: `--server-name` override if present, otherwise
+/// the executable-derived name from
+/// [`crate::manager::paths::derive_server_name`].
+fn resolve_server_name(matches: &ArgMatches, exe: &std::path::Path) -> String {
+    matches
+        .get_one::<String>("server-name")
+        .cloned()
+        .unwrap_or_else(|| crate::manager::paths::derive_server_name(exe))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_exposes_three_leaves() {
+        let cmd = build();
+        let names: Vec<&str> = cmd.get_subcommands().map(Command::get_name).collect();
+        assert!(
+            names.contains(&"enable"),
+            "enable leaf present, got {names:?}"
+        );
+        assert!(
+            names.contains(&"disable"),
+            "disable leaf present, got {names:?}"
+        );
+        assert!(names.contains(&"list"), "list leaf present, got {names:?}");
+    }
+
+    #[test]
+    fn enable_has_expected_flags() {
+        let cmd = build();
+        let enable = cmd.find_subcommand("enable").expect("enable");
+        let flags: Vec<&str> = enable
+            .get_arguments()
+            .map(|a| a.get_id().as_str())
+            .collect();
+        for needed in &["config-path", "server-name", "env", "log-level"] {
+            assert!(
+                flags.contains(needed),
+                "enable missing flag {needed:?}; have {flags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn disable_has_expected_flags() {
+        let cmd = build();
+        let disable = cmd.find_subcommand("disable").expect("disable");
+        let flags: Vec<&str> = disable
+            .get_arguments()
+            .map(|a| a.get_id().as_str())
+            .collect();
+        assert!(flags.contains(&"config-path"));
+        assert!(flags.contains(&"server-name"));
+        assert!(!flags.contains(&"env"), "disable must not carry --env");
+    }
+
+    #[test]
+    fn list_has_only_config_path() {
+        let cmd = build();
+        let list = cmd.find_subcommand("list").expect("list");
+        let flags: Vec<&str> = list.get_arguments().map(|a| a.get_id().as_str()).collect();
+        assert!(flags.contains(&"config-path"));
+        assert!(!flags.contains(&"server-name"));
+    }
+
+    #[test]
+    fn env_flag_is_repeatable() {
+        let cmd = build();
+        let parsed = cmd
+            .try_get_matches_from([
+                "claude",
+                "enable",
+                "--config-path",
+                "/tmp/x.json",
+                "--env",
+                "A=1",
+                "--env",
+                "B=2",
+            ])
+            .expect("parses");
+        let enable = parsed.subcommand_matches("enable").expect("enable matches");
+        let vals: Vec<String> = enable
+            .get_many::<String>("env")
+            .expect("env values")
+            .cloned()
+            .collect();
+        assert_eq!(vals, vec!["A=1".to_string(), "B=2".to_string()]);
+    }
+}

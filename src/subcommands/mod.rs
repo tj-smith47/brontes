@@ -14,6 +14,7 @@
 //! [`crate::handle`] disambiguate "the `mcp` subcommand brontes added" from
 //! "a `mcp` subcommand the user happened to register before mounting brontes".
 
+pub(crate) mod editor;
 pub(crate) mod start;
 pub(crate) mod stream;
 pub(crate) mod tools;
@@ -46,6 +47,7 @@ pub(crate) fn build(command_name: &str) -> Command {
         .subcommand(start::build())
         .subcommand(tools::build())
         .subcommand(stream::build())
+        .subcommand(editor::claude::build())
         .subcommand(
             // Hidden marker; carries no flags and is never meant to be run.
             // Used purely so `handle()` can fingerprint the group as ours.

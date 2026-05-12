@@ -65,6 +65,7 @@ mod command;
 mod config;
 mod error;
 mod exec;
+mod manager;
 mod schema;
 mod selector;
 pub mod selectors;
