@@ -18,6 +18,8 @@
 
 mod annotations;
 mod error;
+mod tool;
 
 pub use annotations::ToolAnnotations;
 pub use error::{Error, Result};
+pub use tool::{ToolInput, ToolOutput};
