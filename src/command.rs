@@ -404,8 +404,8 @@ pub fn command(cfg: Option<&Config>) -> Command {
 ///   a sibling subcommand that brontes did not mint (e.g., the user
 ///   pre-registered a `mcp` subcommand with the same name and forgot to
 ///   rename ours via [`Config::command_name`]).
-/// - Any error returned by the dispatched leaf (`start`, `tools`, or the
-///   `stream` Task-#3 stub).
+/// - Any error returned by the dispatched leaf (`start`, `tools`, or
+///   `stream`).
 pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Config>) -> Result<()> {
     let cfg_owned = cfg.map_or_else(Config::default, Config::clone);
     // An explicit empty `command_name` would have silently re-used "mcp"
@@ -447,7 +447,9 @@ pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Conf
             crate::subcommands::start::run(sub, cli.clone(), Some(cfg_owned)).await
         }
         Some(("tools", sub)) => crate::subcommands::tools::run(sub, cli, Some(cfg_owned)),
-        Some(("stream", sub)) => crate::subcommands::stream::run(sub, cli.clone(), Some(cfg_owned)),
+        Some(("stream", sub)) => {
+            crate::subcommands::stream::run(sub, cli.clone(), Some(cfg_owned)).await
+        }
         // Guard the internal marker subcommand: it parses cleanly through the
         // clap surface (because it is registered as a hidden subcommand), but
         // it is implementation detail and is not runnable. Surface a friendly

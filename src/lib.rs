@@ -44,7 +44,8 @@
 //!   [`Vec<rmcp::model::Tool>`](rmcp::model::Tool) for offline inspection,
 //!   editor-config generation, or hand-rolled server wiring.
 //! - [`command`], [`handle`], [`run`] — mount the `mcp` subtree and serve
-//!   the generated tool list over stdio.
+//!   the generated tool list over stdio (`mcp start`) or streamable HTTP
+//!   (`mcp stream --host <addr> --port <num>`).
 //! - [`Config`] — selectors, annotations, per-flag schema overrides,
 //!   default environment variables, server identity overrides.
 //! - [`Selector`], [`Middleware`] — first-match-wins routing rules and
@@ -84,8 +85,10 @@ pub use tool::{ToolInput, ToolOutput};
 
 /// Internal-test access point: not a stable surface, do not use from
 /// downstream crates. Re-exported only so the integration-test crate can
-/// drive [`server::BrontesServer`] over an in-memory duplex transport.
+/// drive [`server::BrontesServer`] over an in-memory duplex transport
+/// or [`server::http::serve_http`] against an ephemeral local port.
 #[doc(hidden)]
 pub mod __test_internal {
     pub use crate::server::BrontesServer;
+    pub use crate::server::http::serve_http;
 }

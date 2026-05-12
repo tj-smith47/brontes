@@ -36,14 +36,28 @@ tokio = { version = "1", features = [
     "io-util",
     "io-std",
     "sync",
+    "net",
+    "time",
 ] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 async-trait = "0.1"
 futures = "0.3"
 tempfile = "3"
+# HTTP runtime for the `mcp stream` streamable-HTTP transport. The rmcp
+# `StreamableHttpService` is `tower_service::Service<Request<Incoming>>`;
+# we wire it directly to hyper's per-connection serve loop and use
+# `hyper-util::TokioIo` to bridge tokio AsyncRead/AsyncWrite to hyper's
+# IO traits. Axum would also work but pulls ~50 transitive deps; the
+# direct hyper path costs ~5.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
+http-body-util = "0.1"
+# `StreamableHttpService` only implements `tower_service::Service`; we
+# call it directly without the heavier `tower` builder layers.
+tower-service = "0.3"
 
 [dev-dependencies]
 pretty_assertions = "1"
@@ -55,6 +69,10 @@ rmcp = { version = "1.6", features = [
     "transport-streamable-http-server",
     "schemars",
 ] }
+# Smoke-test the streamable-HTTP transport by POSTing real HTTP/1.1 to a
+# bound port. `reqwest` is rmcp's chosen smoke-test client and is already
+# present in its dev-dep graph.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [lints.rust]
 unsafe_code = "forbid"

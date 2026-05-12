@@ -50,8 +50,12 @@ All notable changes to this project are documented here. Format adapted from [Ke
   signal-driven graceful shutdown.
 - `mcp tools` — exports the generated tool list to `./mcp-tools.json`
   as pretty-printed JSON.
-- `mcp stream` — clap surface for the streamable-HTTP MCP server;
-  body lands in a follow-on release alongside middleware execution.
+- `mcp stream --host <HOST> --port <PORT>` — streamable-HTTP MCP server
+  runtime over `rmcp::transport::streamable_http_server::StreamableHttpService`
+  (rmcp 1.6) driven by a hyper per-connection accept loop. Empty
+  `--host` binds `0.0.0.0` (Go-parity); the startup log line matches
+  ophis verbatim. Signal-driven cancellation (SIGINT/SIGTERM on Unix,
+  Ctrl+C on Windows) with a 5-second graceful-drain window.
 
 ### Notes
 

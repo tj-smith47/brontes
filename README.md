@@ -43,7 +43,8 @@ async fn main() -> brontes::Result<()> {
 
 - `brontes::command(cfg)` / `brontes::handle(matches, cli, cfg)` /
   `brontes::run(cli, cfg)` — mount, dispatch, and one-shot runners for the
-  `mcp` subtree (`mcp start`, `mcp tools`, `mcp stream`).
+  `mcp` subtree (`mcp start` for stdio, `mcp stream --host <H> --port <P>`
+  for streamable HTTP, `mcp tools` to export the tool list).
 - `brontes::generate_tools(root, cfg) -> Result<Vec<rmcp::model::Tool>>` —
   offline tool-list builder for consumers that wire their own server.
 - `brontes::Config` — fluent builder for tool-name prefix, selectors,

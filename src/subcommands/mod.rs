@@ -7,7 +7,7 @@
 //! mcp
 //! ├── start       — serve MCP over stdio
 //! ├── tools       — export the tool list to ./mcp-tools.json
-//! └── stream      — serve MCP over streamable HTTP (Task #3 stub)
+//! └── stream      — serve MCP over streamable HTTP
 //! ```
 //!
 //! Plus a hidden internal marker subcommand (`MARKER_NAME`) that lets

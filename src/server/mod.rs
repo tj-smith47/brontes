@@ -10,8 +10,9 @@
 //! Consumers do not construct `BrontesServer` directly in normal use —
 //! [`crate::handle`] / [`crate::run`] wrap it. The type is exposed only
 //! within the crate so the transport-specific subcommand modules
-//! ([`crate::server::stdio`]) can drive it.
+//! ([`crate::server::stdio`], [`crate::server::http`]) can drive it.
 
+pub(crate) mod http;
 pub(crate) mod stdio;
 
 use std::collections::HashMap;

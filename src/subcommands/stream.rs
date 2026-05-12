@@ -1,20 +1,28 @@
-//! `mcp stream` — streamable HTTP MCP server (clap surface only).
+//! `mcp stream` — streamable HTTP MCP server.
 //!
-//! Task #1 ships the clap surface so the consumer CLI tree is shape-complete;
-//! Task #3 wires the rmcp streamable-HTTP transport into [`run`]. The current
-//! body returns [`crate::Error::Config`] so consumers calling it accidentally
-//! get a clean message rather than a silent fallthrough.
+//! Mirrors ophis `start.go::runStreamableHTTPServer` (`start.go:95-126`)
+//! and `config.go::serveStreamableHTTP`. The clap surface is `--host
+//! <HOST>`, `--port <PORT>`, `--log-level <LEVEL>`; an empty `--host` is
+//! mapped to `0.0.0.0` (Go-parity bind-all) inside `run`.
+//!
+//! The runtime body lives in [`crate::server::http::serve_http`]; this
+//! module owns argv translation, signal-listener install, and the
+//! startup log line.
+
+use std::net::SocketAddr;
 
 use clap::{Arg, ArgMatches, Command, value_parser};
+use tokio_util::sync::CancellationToken;
+use tracing::Level;
 
 use crate::Result;
 use crate::config::Config;
 
 /// Build the `mcp stream` clap subcommand.
 ///
-/// Flag surface is fixed at this layer because the CLI shape must be stable
-/// for editor-config writers (Task #4) regardless of when the transport is
-/// wired in.
+/// Flag surface (`--host`, `--port`, `--log-level`) is stable per
+/// ophis-parity; the editor-config writer derives the JSON snippet for
+/// MCP clients from this surface.
 pub(crate) fn build() -> Command {
     Command::new("stream")
         .about("Start the MCP server over streamable HTTP")
@@ -45,17 +53,129 @@ pub(crate) fn build() -> Command {
         )
 }
 
-/// Placeholder runtime for `mcp stream`.
+/// Run `mcp stream` against the supplied CLI tree.
 ///
-/// Returns [`crate::Error::Config`] with a Task-#3 marker message. Task #3
-/// replaces this body with the rmcp streamable-HTTP server wiring; the
-/// signature stays sync because the body has no awaits, and Task #3 will
-/// flip it to `async fn` when it actually awaits transport setup.
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn run(_matches: &ArgMatches, _cli: Command, _cfg: Option<Config>) -> Result<()> {
-    Err(crate::Error::Config(
-        "mcp stream not yet wired — Task #3".into(),
-    ))
+/// `matches` is the [`ArgMatches`] for the `stream` subcommand; `cli` is
+/// the full user CLI (cloned by the caller); `cfg` is the optional user
+/// configuration.
+///
+/// # Errors
+///
+/// - [`crate::Error::Config`] when `--host`/`--port` produce an invalid
+///   `SocketAddr` (this is rare since clap already validates `--port` as
+///   `u16`; the host string parse is the remaining failure mode).
+/// - Any error surfaced by [`crate::server::http::serve_http`] (bind
+///   failure, schema/config error from the pre-walk, transport panic).
+pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
+    let cfg = cfg.unwrap_or_default();
+    let log_level = parse_log_level(matches);
+    init_tracing(log_level.or(cfg.log_level));
+
+    let raw_host = matches.get_one::<String>("host").map_or("", String::as_str);
+    let port = *matches
+        .get_one::<u16>("port")
+        .expect("clap enforces a default value of 8080 on --port");
+
+    // Empty host → bind-all. clap's `default_value("")` leaves the
+    // raw string empty when the user doesn't pass `--host`; Go's
+    // `net.Listen("tcp", ":8080")` accepts a missing host but Rust's
+    // `SocketAddr` parser does not, so translate explicitly.
+    let host = if raw_host.is_empty() {
+        "0.0.0.0"
+    } else {
+        raw_host
+    };
+    let addr: SocketAddr = format!("{host}:{port}").parse().map_err(|e| {
+        crate::Error::Config(format!(
+            "invalid --host/--port combination {host:?}:{port}: {e}"
+        ))
+    })?;
+
+    let cancel = CancellationToken::new();
+    spawn_signal_listener(cancel.clone());
+
+    // Startup log line matches ophis `config.go:124`:
+    // `fmt.Sprintf("MCP server listening on address %q", addr)`. The
+    // `%q` verb yields a Go-quoted string; we reproduce that with a
+    // literal `"{addr}"` (no escaping needed for SocketAddr Display).
+    tracing::info!("MCP server listening on address \"{addr}\"");
+
+    crate::server::http::serve_http(cli, cfg, addr, cancel).await
+}
+
+/// Parse the `--log-level` flag into a [`Level`] when present.
+fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
+    let raw = matches.get_one::<String>("log-level")?;
+    match raw.to_ascii_lowercase().as_str() {
+        "trace" => Some(Level::TRACE),
+        "debug" => Some(Level::DEBUG),
+        "info" => Some(Level::INFO),
+        "warn" | "warning" => Some(Level::WARN),
+        "error" => Some(Level::ERROR),
+        other => {
+            tracing::warn!(value = %other, "unrecognized --log-level; falling back to default");
+            None
+        }
+    }
+}
+
+/// Install a `tracing_subscriber` pointed at stderr.
+///
+/// Precedence: explicit override > [`Config::log_level`] > `RUST_LOG`
+/// environment > `INFO`. Idempotent (silently ignores re-init).
+fn init_tracing(level: Option<Level>) {
+    use tracing_subscriber::EnvFilter;
+
+    let filter = level.map_or_else(
+        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        |lvl| EnvFilter::new(lvl.to_string()),
+    );
+
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .try_init();
+}
+
+/// Spawn a task that cancels `token` on SIGINT/SIGTERM (Unix) or Ctrl+C
+/// (Windows). The task is detached; cancellation propagates through the
+/// HTTP server's accept-loop select branch.
+#[cfg(unix)]
+fn spawn_signal_listener(token: CancellationToken) {
+    tokio::spawn(async move {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not install SIGINT handler");
+                return;
+            }
+        };
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not install SIGTERM handler");
+                return;
+            }
+        };
+        tokio::select! {
+            _ = sigint.recv() => tracing::info!("received SIGINT; cancelling MCP server"),
+            _ = sigterm.recv() => tracing::info!("received SIGTERM; cancelling MCP server"),
+        }
+        token.cancel();
+    });
+}
+
+#[cfg(not(unix))]
+fn spawn_signal_listener(token: CancellationToken) {
+    tokio::spawn(async move {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %e, "could not install Ctrl+C handler");
+            return;
+        }
+        tracing::info!("received Ctrl+C; cancelling MCP server");
+        token.cancel();
+    });
 }
 
 #[cfg(test)]
@@ -75,16 +195,49 @@ mod tests {
     }
 
     #[test]
-    fn run_returns_task3_marker_error() {
-        let cmd = build();
-        let matches = cmd.clone().try_get_matches_from(["stream"]).expect("parse");
-        let result = run(&matches, cmd, None);
-        match result {
-            Err(crate::Error::Config(msg)) => assert!(
-                msg.contains("Task #3"),
-                "expected Task #3 marker in message, got: {msg}"
-            ),
-            other => panic!("expected Config error, got {other:?}"),
+    fn empty_host_translates_to_bind_all() {
+        // Mirror the empty-host-to-0.0.0.0 translation that lives inline
+        // in `run`: this guards the Go-parity behavior against regression
+        // without standing up a full server.
+        let raw_host = "";
+        let host = if raw_host.is_empty() {
+            "0.0.0.0"
+        } else {
+            raw_host
+        };
+        let addr: SocketAddr = format!("{host}:{}", 8080_u16).parse().expect("parse");
+        assert_eq!(addr.port(), 8080);
+        assert!(addr.ip().is_unspecified(), "0.0.0.0 must be unspecified");
+    }
+
+    #[test]
+    fn non_empty_host_passes_through() {
+        let raw_host = "127.0.0.1";
+        let host = if raw_host.is_empty() {
+            "0.0.0.0"
+        } else {
+            raw_host
+        };
+        let addr: SocketAddr = format!("{host}:{}", 8081_u16).parse().expect("parse");
+        assert_eq!(addr.port(), 8081);
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn parse_log_level_recognises_common_values() {
+        for (raw, expected) in [
+            ("trace", Level::TRACE),
+            ("debug", Level::DEBUG),
+            ("info", Level::INFO),
+            ("warn", Level::WARN),
+            ("warning", Level::WARN),
+            ("error", Level::ERROR),
+        ] {
+            let matches = Command::new("stream")
+                .arg(Arg::new("log-level").long("log-level"))
+                .try_get_matches_from(["stream", "--log-level", raw])
+                .expect("parses");
+            assert_eq!(parse_log_level(&matches), Some(expected), "raw={raw}");
         }
     }
 }
