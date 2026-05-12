@@ -18,8 +18,12 @@
 
 mod annotations;
 mod error;
+mod selector;
 mod tool;
 
 pub use annotations::ToolAnnotations;
 pub use error::{Error, Result};
+pub use selector::{
+    BoxedNext, CmdMatcher, FlagMatcher, Middleware, MiddlewareCtx, MiddlewareResult, Selector,
+};
 pub use tool::{ToolInput, ToolOutput};
