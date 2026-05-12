@@ -65,9 +65,9 @@ pub(crate) struct ResolvedTool {
     /// `None` means the exec step runs unwrapped.
     pub middleware: Option<Middleware>,
     /// Space-joined clap command path (e.g. `"my-cli deploy prod"`).
-    /// Retained for diagnostics; argv construction lives in
+    /// Included in MCP tool-error messages so operators can see which
+    /// underlying CLI command failed. Argv construction lives in
     /// [`crate::exec::build_command_args`] which keys off the MCP tool name.
-    #[allow(dead_code)] // surfaced through Debug-style diagnostics only
     pub command_path: String,
 }
 

@@ -341,7 +341,7 @@ async fn middleware_timeout_returns_promptly() {
         "timed-out middleware must produce a tool_error; got {result:?}"
     );
     assert!(
-        elapsed < Duration::from_millis(800),
+        elapsed < Duration::from_millis(300),
         "middleware timeout must fire well before the 1s inner sleep; elapsed={elapsed:?}"
     );
 

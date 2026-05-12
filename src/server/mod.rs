@@ -174,6 +174,7 @@ impl ServerHandler for BrontesServer {
         let env: HashMap<String, String> = self.cfg.default_env.clone();
 
         let middleware = resolved.middleware.clone();
+        let command_path = resolved.command_path.clone();
         let ctx = MiddlewareCtx {
             cancellation_token: context.ct.clone(),
             tool_name: name.to_string(),
@@ -218,11 +219,16 @@ impl ServerHandler for BrontesServer {
                 // `is_error: true`) rather than a JSON-RPC Err. The MCP
                 // server keeps running; the client learns this one call
                 // failed without the transport tearing down.
-                return Ok(tool_error_result(name, &crate::Error::Panic(payload)));
+                return Ok(tool_error_result(
+                    name,
+                    &command_path,
+                    &crate::Error::Panic(payload),
+                ));
             }
             Err(join_err) => {
                 return Ok(tool_error_result(
                     name,
+                    &command_path,
                     &crate::Error::Panic(format!("middleware/exec task join error: {join_err}")),
                 ));
             }
@@ -234,7 +240,7 @@ impl ServerHandler for BrontesServer {
             // `tool_error` so a single misbehaving call cannot kill the
             // server. Spawn failures, timeouts, cancellation, etc. all
             // land here.
-            Err(e) => Ok(tool_error_result(name, &e)),
+            Err(e) => Ok(tool_error_result(name, &command_path, &e)),
         }
     }
 
@@ -247,12 +253,23 @@ impl ServerHandler for BrontesServer {
 /// `is_error: true`. The error message is included in the text content; the
 /// structured payload carries the brontes error category so clients can
 /// distinguish (e.g.) a spawn failure from a panic.
-fn tool_error_result(name: &str, e: &crate::Error) -> CallToolResult {
-    let body = format!("tool '{name}' failed to execute: {e}");
+///
+/// `command_path` is the space-joined clap path for the underlying subcommand
+/// (e.g. `"myapp greet"`). When non-empty it is appended to the human-readable
+/// body so operators can immediately see which CLI command failed without
+/// cross-referencing the tool name against the walked tree.
+fn tool_error_result(name: &str, command_path: &str, e: &crate::Error) -> CallToolResult {
+    let base = format!("tool '{name}' failed to execute: {e}");
+    let body = if command_path.is_empty() {
+        base
+    } else {
+        format!("{base} (command: \"{command_path}\")")
+    };
     let mut r = CallToolResult::error(vec![Content::text(body.clone())]);
     r.structured_content = Some(serde_json::json!({
         "error": body,
         "category": brontes_error_category(e),
+        "command": command_path,
     }));
     r
 }
@@ -415,5 +432,55 @@ mod tests {
         };
         let result = tool_output_to_result("myapp_greet", &out);
         assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn tool_error_result_includes_command_path_in_body() {
+        let e = crate::Error::Panic("test panic".to_string());
+        let result = tool_error_result("myapp_greet", "myapp greet", &e);
+
+        assert_eq!(result.is_error, Some(true));
+
+        // The human-readable text body must contain the command path.
+        let body = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            body.contains("command: \"myapp greet\""),
+            "body must include command path; got: {body:?}"
+        );
+
+        // The structured payload must also carry the command path.
+        let sc = result
+            .structured_content
+            .as_ref()
+            .expect("structured_content must be Some");
+        assert_eq!(
+            sc["command"].as_str(),
+            Some("myapp greet"),
+            "structured_content.command must equal the command path"
+        );
+    }
+
+    #[test]
+    fn tool_error_result_empty_command_path_omits_parenthetical() {
+        let e = crate::Error::Panic("boom".to_string());
+        let result = tool_error_result("myapp_greet", "", &e);
+        assert_eq!(result.is_error, Some(true));
+        let body = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            !body.contains("command:"),
+            "empty command_path must not add the parenthetical; got: {body:?}"
+        );
     }
 }
