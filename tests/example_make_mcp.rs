@@ -17,35 +17,61 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Build the example with `cargo build --example make-mcp`, then return the
-/// path to the produced binary.
+/// Build the example with `cargo build --example make-mcp --message-format=json`
+/// and return the path Cargo reports for the produced binary.
 ///
-/// `cargo test --example` doesn't exist; we shell out to `cargo build` once
-/// from inside this test and locate the binary by convention
-/// (`<target>/debug/examples/make-mcp`). The `CARGO_TARGET_DIR` env var is
-/// respected when set (so test runs under a custom target dir still work).
+/// Parsing the JSON output rather than guessing the path makes the test
+/// robust to cross-compile setups (`CARGO_BUILD_TARGET=...` inserts a triple
+/// segment), workspace target-dir overrides, and the windows `.exe` suffix
+/// — Cargo's own report is the source of truth. This is the same approach
+/// `assert_cmd` uses internally.
 fn build_and_locate_example() -> PathBuf {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let status = Command::new(&cargo)
-        .args(["build", "--example", "make-mcp"])
-        .status()
+    let output = Command::new(&cargo)
+        .args(["build", "--example", "make-mcp", "--message-format=json"])
+        .output()
         .expect("invoke cargo build --example make-mcp");
-    assert!(status.success(), "cargo build --example make-mcp failed");
-
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
-        || {
-            let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            p.push("target");
-            p
-        },
-        PathBuf::from,
+    assert!(
+        output.status.success(),
+        "cargo build --example make-mcp failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    let bin = if cfg!(windows) {
-        "make-mcp.exe"
-    } else {
-        "make-mcp"
-    };
-    target_dir.join("debug").join("examples").join(bin)
+
+    // Cargo emits one JSON object per line on stdout. The line we want is a
+    // `compiler-artifact` whose `target.kind` includes `"example"` and whose
+    // `target.name` is `"make-mcp"`; its `executable` field is the absolute
+    // path to the produced binary. Other lines (build scripts, dependency
+    // artifacts, the final `build-finished` summary) are ignored.
+    for line in output.stdout.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(msg) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if msg.get("reason").and_then(|v| v.as_str()) != Some("compiler-artifact") {
+            continue;
+        }
+        let target = msg.get("target");
+        let kinds = target
+            .and_then(|t| t.get("kind"))
+            .and_then(|v| v.as_array());
+        let name = target.and_then(|t| t.get("name")).and_then(|v| v.as_str());
+        let is_make_mcp_example = kinds
+            .is_some_and(|ks| ks.iter().any(|k| k.as_str() == Some("example")))
+            && name == Some("make-mcp");
+        if !is_make_mcp_example {
+            continue;
+        }
+        if let Some(exe) = msg.get("executable").and_then(|v| v.as_str()) {
+            return PathBuf::from(exe);
+        }
+    }
+    panic!(
+        "cargo build did not report an executable for the make-mcp example; \
+         stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 #[test]

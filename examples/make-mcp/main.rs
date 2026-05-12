@@ -1,12 +1,12 @@
-//! `make-mcp` — example brontes consumer that exposes GNU `make` over MCP.
+//! `make-mcp` — example `brontes` consumer that exposes GNU `make` over `MCP`.
 //!
 //! Wraps GNU `make` as a tiny single-leaf CLI: a `build` subcommand with a
 //! required `--directory` flag (the makefile root) plus optional `--target`,
 //! `--jobs`, and `--dry-run` knobs. Demonstrates how a real CLI surfaces as
-//! MCP tools, and exercises the required-flag schema path so generated tool
-//! schemas carry a non-empty `inputSchema.required` array.
+//! `MCP` tools, and exercises the required-flag schema path so generated
+//! tool schemas carry a non-empty `inputSchema.required` array.
 //!
-//! Run as an MCP server over stdio:
+//! Run as an `MCP` server over stdio:
 //!
 //! ```bash
 //! cargo run --example make-mcp -- mcp start
@@ -18,7 +18,7 @@
 //! cargo run --example make-mcp -- mcp tools
 //! ```
 //!
-//! Invoke the wrapped tool directly (bypassing MCP):
+//! Invoke the wrapped tool directly (bypassing `MCP`):
 //!
 //! ```bash
 //! cargo run --example make-mcp -- build --directory ./my-project --target test
@@ -88,8 +88,8 @@ async fn main() -> brontes::Result<()> {
 }
 
 /// Shell out to `make` with the parsed args. Used when the example is
-/// invoked directly (`build` subcommand) — the same flag surface that MCP
-/// exposes as a tool.
+/// invoked directly (`build` subcommand) — the same flag surface that
+/// `MCP` exposes as a tool.
 fn run_make(sub: &clap::ArgMatches) -> brontes::Result<()> {
     let dir: &String = sub
         .get_one("directory")
