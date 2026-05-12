@@ -1,10 +1,10 @@
 //! Iterative depth-first walker for a `clap::Command` tree.
 //!
 //! Produces a flat list of [`ResolvedCmd`] entries — each carrying a
-//! reference to the underlying [`clap::Command`], the full space-joined
-//! path from the root, and the path's parts. Path-keyed `Config` lookups
-//! (annotations, deprecated commands, flag-schema overrides) use the
-//! `path` string built here, since clap commands have no parent pointer.
+//! reference to the underlying [`clap::Command`] and the full space-joined
+//! path from the root. Path-keyed `Config` lookups (annotations, deprecated
+//! commands, flag-schema overrides) use the `path` string built here, since
+//! clap commands have no parent pointer.
 
 use clap::Command;
 
@@ -20,9 +20,6 @@ pub(crate) struct ResolvedCmd<'a> {
     pub cmd: &'a Command,
     /// Space-joined path from the root command (e.g. `"my-cli mcp claude enable"`).
     pub path: String,
-    /// Path components in order (e.g. `["my-cli", "mcp", "claude", "enable"]`).
-    #[allow(dead_code)]
-    pub parts: Vec<&'a str>,
 }
 
 /// Walk the clap tree depth-first, producing a flat `Vec` of resolved
@@ -40,7 +37,7 @@ pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
             p.push(sub.get_name());
             stack.push((sub, p));
         }
-        out.push(ResolvedCmd { cmd, path, parts });
+        out.push(ResolvedCmd { cmd, path });
     }
     out
 }
@@ -130,7 +127,7 @@ mod tests {
         let entries = walk(&root);
         let deepest = entries
             .iter()
-            .find(|e| e.parts.len() == 3)
+            .find(|e| e.path.split(' ').count() == 3)
             .expect("grandchild entry present");
         assert_eq!(deepest.path, "root child grandchild");
     }

@@ -57,11 +57,10 @@ impl SchemaType {
 }
 
 /// All `value_parser!` target types brontes recognises, paired with the
-/// [`SchemaType`] they classify to. Single source of truth — both
-/// [`schema_type_for_type_id`] (TypeId-keyed) and the clap-`AnyValueId`
-/// classifier in `schema::flag` walk this table.
+/// [`SchemaType`] they classify to. Single source of truth for the
+/// clap-`AnyValueId` classifier in `schema::flag`.
 ///
-/// Covered types (per PLAN §5.1 mapping table):
+/// Covered types:
 /// - `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, `usize` → [`SchemaType::Integer`]
 /// - `f32`, `f64` → [`SchemaType::Number`]
 /// - `bool` → [`SchemaType::Boolean`]
@@ -91,23 +90,6 @@ pub(crate) fn known_type_classifications() -> &'static [(TypeId, SchemaType)] {
     })
 }
 
-/// Look up the [`SchemaType`] for a known `value_parser!` target type.
-///
-/// Returns `None` for parser types brontes does not recognise — the flag
-/// mapper falls back to [`SchemaType::String`] and emits a
-/// `tracing::debug!` in that case.
-///
-/// Consults [`known_type_classifications`]; add new types there to cover
-/// both this function and the clap-`AnyValueId` path in `schema::flag`.
-// Used by the test suite below; future modules with TypeId-keyed lookups
-// may consume this directly.
-#[allow(dead_code)]
-pub(crate) fn schema_type_for_type_id(id: TypeId) -> Option<SchemaType> {
-    known_type_classifications()
-        .iter()
-        .find_map(|&(ty, schema)| (ty == id).then_some(schema))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,85 +104,5 @@ mod tests {
         assert_eq!(SchemaType::StringPath.as_json_type(), "string");
         assert_eq!(SchemaType::Array.as_json_type(), "array");
         assert_eq!(SchemaType::Object.as_json_type(), "object");
-    }
-
-    #[test]
-    fn schema_type_for_type_id_recognized() {
-        // signed integers
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<i8>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<i16>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<i32>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<i64>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<isize>()),
-            Some(SchemaType::Integer)
-        );
-        // unsigned integers
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<u8>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<u16>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<u32>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<u64>()),
-            Some(SchemaType::Integer)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<usize>()),
-            Some(SchemaType::Integer)
-        );
-        // floats
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<f32>()),
-            Some(SchemaType::Number)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<f64>()),
-            Some(SchemaType::Number)
-        );
-        // bool
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<bool>()),
-            Some(SchemaType::Boolean)
-        );
-        // string
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<String>()),
-            Some(SchemaType::String)
-        );
-        // path types
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<std::path::PathBuf>()),
-            Some(SchemaType::StringPath)
-        );
-        assert_eq!(
-            schema_type_for_type_id(TypeId::of::<std::ffi::OsString>()),
-            Some(SchemaType::StringPath)
-        );
-    }
-
-    #[test]
-    fn schema_type_for_type_id_unknown() {
-        struct MyCustomType;
-        assert_eq!(schema_type_for_type_id(TypeId::of::<MyCustomType>()), None);
     }
 }
