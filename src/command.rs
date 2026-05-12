@@ -307,10 +307,10 @@ const DEFAULT_COMMAND_NAME: &str = "mcp";
 ///
 /// Returns a plain [`Command`] (not a `Result`) so the canonical two-line
 /// call site stays a single `.subcommand(brontes::command(None))` token.
-/// All validation — empty group name, sibling collision with a user-defined
-/// subcommand, missing `mcp` mount — is deferred to [`handle`], which sees
-/// the assembled parent CLI tree and surfaces a clean
-/// [`crate::Error::Config`] at dispatch time.
+/// Validation — empty group name, sibling collision with a user-defined
+/// subcommand, missing `mcp` mount — happens at [`handle`] time, when
+/// the assembled parent CLI tree is in scope and a clean
+/// [`crate::Error::Config`] can surface at dispatch.
 ///
 /// An empty `cfg.command_name` defaults back to `"mcp"`; an explicit empty
 /// string never reaches `clap::Command::new` from this constructor.

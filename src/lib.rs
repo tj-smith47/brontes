@@ -44,9 +44,7 @@
 //!   [`Vec<rmcp::model::Tool>`](rmcp::model::Tool) for offline inspection,
 //!   editor-config generation, or hand-rolled server wiring.
 //! - [`command`], [`handle`], [`run`] — mount the `mcp` subtree and serve
-//!   the generated tool list over stdio (HTTP streamable transport lands
-//!   in a follow-on release; the `mcp stream` clap surface is registered
-//!   today so editor-config writers can target it).
+//!   the generated tool list over stdio.
 //! - [`Config`] — selectors, annotations, per-flag schema overrides,
 //!   default environment variables, server identity overrides.
 //! - [`Selector`], [`Middleware`] — first-match-wins routing rules and
