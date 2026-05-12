@@ -18,11 +18,13 @@
 //! - Existing-server warning and disable-missing warning — printed to
 //!   stdout exactly as PLAN §11 #4 and #5 require, no emoji prefix.
 //!
-//! Tasks #5 (Cursor) and #6 (`VSCode`) layer their own subcommand modules
-//! beside [`claude`] using the same helpers — see PLAN.md §3 module layout.
+//! Claude (Task #4), Cursor (Task #5), and `VSCode` (Task #6) layer their
+//! own subcommand modules beside each other using the shared helpers below
+//! — see PLAN.md §3 module layout.
 
 pub(crate) mod claude;
 pub(crate) mod cursor;
+pub(crate) mod vscode;
 
 use std::collections::BTreeMap;
 

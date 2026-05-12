@@ -1,6 +1,6 @@
 //! Editor-config manager — the shared load / save / backup machinery
 //! consumed by the per-editor subcommand handlers (Claude in Task #4,
-//! Cursor and `VSCode` in Tasks #5 and #6).
+//! Cursor in Task #5, `VSCode` in Task #6).
 //!
 //! The shape mirrors ophis `internal/cfgmgr/manager/manager.go`:
 //!
@@ -33,6 +33,7 @@
 pub(crate) mod claude;
 pub(crate) mod cursor;
 pub(crate) mod paths;
+pub(crate) mod vscode;
 
 use std::path::{Path, PathBuf};
 
