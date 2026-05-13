@@ -115,7 +115,7 @@ pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Res
 /// Matches ophis `mcp stream`'s `net.Listen("tcp", ":port")` semantics:
 /// Go's listener accepts a missing host but Rust's [`SocketAddr`] parser
 /// does not, so the bind-all translation is explicit on the Rust side.
-pub(crate) fn resolve_bind_host(raw: &str) -> &str {
+pub const fn resolve_bind_host(raw: &str) -> &str {
     if raw.is_empty() { "0.0.0.0" } else { raw }
 }
 

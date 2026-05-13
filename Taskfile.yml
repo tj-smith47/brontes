@@ -29,7 +29,7 @@ tasks:
   clippy:
     desc: Run clippy with warnings as errors
     cmds:
-      - cargo clippy --all-targets --all-features -- -D warnings
+      - cargo clippy --all-targets --all-features -- -W clippy::nursery -D warnings
 
   test:
     desc: Run all tests
