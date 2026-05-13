@@ -47,3 +47,11 @@ Cargo.lock.bak
 .worktrees/
 *.local.md
 mcp-tools.json
+
+# CI-load-bearing .claude/ paths — explicitly un-ignored so they ship with the
+# repo. Everything else under .claude/ stays local-only. (Un-ignoring a file
+# under an ignored directory requires un-ignoring each path component, hence
+# the explicit `.claude/` + `.claude/scripts/` entries below.)
+!.claude/
+!.claude/scripts/
+!.claude/scripts/update-coverage-badge.sh

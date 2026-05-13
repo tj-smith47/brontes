@@ -18,7 +18,9 @@
 //! [`crate::server::http::serve_http`] delegates to `serve_http_with`
 //! to expose its [`crate::server::http::Acceptor`] seam.
 
+#[cfg(unix)]
 use std::future::Future;
+#[cfg(unix)]
 use std::io;
 
 use tokio_util::sync::CancellationToken;

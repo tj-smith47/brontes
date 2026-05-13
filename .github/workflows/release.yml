@@ -42,8 +42,7 @@ jobs:
       - name: Run anodizer release
         uses: tj-smith47/anodizer-action@v1
         with:
-          from-source: true
-          install-rust: false
+          version: v0.2.0
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

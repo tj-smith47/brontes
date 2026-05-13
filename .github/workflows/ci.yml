@@ -100,6 +100,29 @@ jobs:
           tool: cargo-deny
       - run: cargo deny check
 
+  # Coverage: master-only — runs cargo-llvm-cov, emits Cobertura XML, then
+  # the .claude/scripts/update-coverage-badge.sh script extracts the line-rate
+  # and pushes a shields.io-endpoint JSON to the orphan `badges` branch.
+  # README pulls the badge from that branch.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-coverage
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run tests with coverage
+        run: cargo llvm-cov --cobertura --output-path cobertura.xml
+      - name: Update coverage badge
+        run: bash .claude/scripts/update-coverage-badge.sh cobertura.xml
+
   # Auto-tag: on master only, after every other check passes, mint the next
   # tag via `anodizer tag` and push it. Tag push triggers .github/workflows/release.yml.
   #
@@ -128,8 +151,7 @@ jobs:
       - name: Run anodizer tag
         uses: tj-smith47/anodizer-action@v1
         with:
-          from-source: true
-          install-rust: false
+          version: v0.2.0
           args: tag
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
