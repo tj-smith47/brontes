@@ -12,6 +12,20 @@ documentation = "https://docs.rs/brontes"
 readme = "README.md"
 keywords = ["cli", "clap", "mcp", "model-context-protocol", "ai"]
 categories = ["command-line-interface", "development-tools"]
+# Keep the published .crate tarball lean: developer-only configuration,
+# release scaffolding, and CI workflows do not belong in consumer crates.
+exclude = [
+    ".github/",
+    ".claude/",
+    ".cargo/",
+    ".gitignore",
+    ".anodizer.yaml",
+    "Taskfile.yml",
+    "clippy.toml",
+    "deny.toml",
+    "rustfmt.toml",
+    "rust-toolchain.toml",
+]
 
 [lib]
 name = "brontes"
