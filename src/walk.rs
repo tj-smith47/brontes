@@ -372,7 +372,7 @@ mod tests {
         );
     }
 
-    // ── §11.11 pinning: group-only rule is the brontes substitute ──────────
+    // ── group-only rule (brontes substitute) ────────────────────────────────
     //
     // ophis filters any cobra.Command with `Run==nil && RunE==nil &&
     // PreRun==nil && PreRunE==nil`. clap has no `Run` field — every clap
@@ -391,7 +391,7 @@ mod tests {
     // cannot detect "user forgot to wire this leaf into a match arm" — every
     // attached leaf is presumed intended. Filtering case (3) would silently
     // drop legitimate dispatch-by-name leaves (e.g. `mycli ping` with no
-    // flags or subcommands). The non-port stands. See PLAN.md §11.
+    // flags or subcommands). The non-port stands.
 
     #[test]
     fn pin_group_only_subcommand_required_no_args_is_filtered() {
@@ -413,7 +413,7 @@ mod tests {
     fn pin_degenerate_leaf_no_args_no_subs_is_not_filtered() {
         // Inverse of ophis's `Run == nil` leaf filter. clap cannot
         // distinguish "intentional dispatch-by-name leaf" from "accidentally
-        // wired stub", so this leaf survives. Locks the §11 non-port against
+        // wired stub", so this leaf survives. Locks the non-port against
         // future drift.
         let cmd = Command::new("ping");
         let cfg = Config::default();

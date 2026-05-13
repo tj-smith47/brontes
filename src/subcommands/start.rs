@@ -34,7 +34,7 @@ pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Res
 
 /// Test-only proxy for [`parse_log_level`]. Exposed via
 /// [`crate::__test_internal::parse_start_log_level`] so the warn-fire
-/// test crate can assert the §11 #9 unrecognized-`--log-level`
+/// test crate can assert the unrecognized-`--log-level`
 /// `tracing::warn!` fires without driving the full `serve_stdio` runtime.
 pub fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
     parse_log_level(matches)

@@ -9,15 +9,15 @@
 //! prompt-string inputs the editor uses when resolving `${input:<id>}`
 //! references) plus the `servers` map keyed by server name. The top-level
 //! key differs from Cursor — `VSCode` uses `servers`, Cursor uses
-//! `mcpServers` — but the per-server struct shape is byte-identical (PLAN
-//! line 549/550: `VSCodeServer` and `CursorServer` share the same six-field
+//! `mcpServers` — but the per-server struct shape is byte-identical
+//! (`VSCodeServer` and `CursorServer` share the same six-field
 //! declaration order).
 //!
 //! Field order on the Rust struct mirrors the ophis Go struct declaration
 //! order so `serde_json::to_string_pretty` writes byte-identical bytes to
-//! ophis for the same inputs (PLAN line 549).
+//! ophis for the same inputs.
 //!
-//! # Round-trip fidelity (PLAN line 566)
+//! # Round-trip fidelity
 //!
 //! brontes never **constructs** an [`super::Input`] (`mcp vscode enable`
 //! only writes to the server map), but user configs in the wild routinely
@@ -40,9 +40,9 @@ use super::{EditorConfig, Input};
 /// [`BTreeMap`] so on-disk key order is deterministic across runs, which
 /// is what the golden round-trip parity tests against ophis require.
 ///
-/// PLAN line 551 pins this shape: the JSON key is `servers` (NOT
-/// `mcpServers` — that is Cursor's spelling), and the Rust field name
-/// matches the JSON key literally so no `#[serde(rename = ...)]` is needed.
+/// The JSON key is `servers` (NOT `mcpServers` — that is Cursor's
+/// spelling), and the Rust field name matches the JSON key literally so
+/// no `#[serde(rename = ...)]` is needed.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[allow(clippy::upper_case_acronyms)]
 pub struct VSCodeConfig {
@@ -56,7 +56,7 @@ pub struct VSCodeConfig {
     /// driven by [`super::Manager`] via the [`EditorConfig`] trait.
     ///
     /// JSON key: `servers` (NO `rename` — the Rust field name matches the
-    /// on-disk key literally; PLAN line 551).
+    /// on-disk key literally).
     #[serde(default)]
     pub(crate) servers: BTreeMap<String, VSCodeServer>,
 }
@@ -64,7 +64,7 @@ pub struct VSCodeConfig {
 /// One entry under `servers` in `VSCode`'s `mcp.json`.
 ///
 /// Field order matches ophis `vscode/server.go` exactly (same shape as
-/// `CursorServer`; PLAN line 549/550) so `serde_json::to_string_pretty`
+/// `CursorServer`) so `serde_json::to_string_pretty`
 /// produces byte-stable output for the parity golden:
 ///
 /// 1. `type` — always `"stdio"` on write; on read, `omitempty` so non-stdio
@@ -130,7 +130,7 @@ mod tests {
     fn empty_config_serializes_with_only_servers() {
         // `inputs` is `omitempty` (empty `Vec`); only `servers` survives.
         // The JSON key is `servers` (NOT `mcpServers` — that is Cursor's
-        // spelling). PLAN line 551.
+        // spelling).
         let cfg = VSCodeConfig::default();
         let s = serde_json::to_string(&cfg).expect("serialize");
         assert_eq!(s, r#"{"servers":{}}"#);
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn inputs_round_trip_preserves_both_password_states() {
-        // PLAN line 566: round-trip fixture must include both password=true
+        // Round-trip fixture must include both password=true
         // and password=false entries. password=false must be omitted from
         // the on-disk JSON (`omitempty`); both must reparse correctly.
         let raw = r#"{

@@ -203,7 +203,7 @@ impl<C: EditorConfig> Manager<C> {
     ///
     /// Prints the existing-server warning (`MCP server "NAME" already
     /// exists and will be overwritten`) to stdout when the name already
-    /// exists. Per PLAN §11 #4, no emoji prefix.
+    /// exists. No emoji prefix.
     pub(crate) fn enable_server(&mut self, name: &str, server: C::Server) -> Result<()> {
         if self.config.has_server(name) {
             println!("MCP server \"{name}\" already exists and will be overwritten");
@@ -216,7 +216,7 @@ impl<C: EditorConfig> Manager<C> {
 
     /// Remove `name` from the server map and persist.
     ///
-    /// Per PLAN §11 #5, when the name is not configured, prints
+    /// When the name is not configured, prints
     /// `MCP server "NAME" does not exist` to stdout and returns `Ok(())`
     /// — no error, no exit-code change. No emoji prefix.
     pub(crate) fn disable_server(&mut self, name: &str) -> Result<()> {

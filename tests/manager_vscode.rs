@@ -3,11 +3,11 @@
 //! `--workspace` flag that switches between user mode (per-OS default) and
 //! workspace mode (`$CWD/.vscode/mcp.json`).
 //!
-//! The `VSCode` and Cursor server-struct shapes are byte-identical (PLAN line
-//! 549/550 — same six-field declaration order); the **one** structural
-//! divergence is the top-level JSON key: `VSCode` uses `servers`, Cursor
-//! uses `mcpServers`. Every test that targets the JSON shape asserts the
-//! `servers` key, not `mcpServers`.
+//! The `VSCode` and Cursor server-struct shapes are byte-identical (same
+//! six-field declaration order); the **one** structural divergence is the
+//! top-level JSON key: `VSCode` uses `servers`, Cursor uses `mcpServers`.
+//! Every test that targets the JSON shape asserts the `servers` key, not
+//! `mcpServers`.
 //!
 //! Every test that writes to the filesystem isolates inside a
 //! `tempfile::TempDir` — no test touches the real `$HOME`. The CLI-driven
@@ -380,8 +380,8 @@ fn disable_removes_existing_server() {
 
 #[test]
 fn disable_missing_server_is_ok() {
-    // Per PLAN §11 #5: disable on a missing server name prints a warning
-    // and returns Ok(()) — not an error.
+    // Disable on a missing server name prints a warning and returns
+    // Ok(()) — not an error.
     let dir = TempDir::new().expect("tempdir");
     let cfg_path = dir.path().join("mcp.json");
     std::fs::write(&cfg_path, b"{\"servers\":{}}").expect("seed");
@@ -521,9 +521,9 @@ fn save_no_backup_on_missing_primary() {
 
 #[test]
 fn round_trip_preserves_inputs_with_mixed_password_states() {
-    // PLAN line 566: brontes never CONSTRUCTS an Input, but read-mutate-
-    // write must preserve them verbatim. Both password=true and
-    // password=false must survive.
+    // brontes never CONSTRUCTS an Input, but read-mutate-write must
+    // preserve them verbatim. Both password=true and password=false
+    // must survive.
     let dir = TempDir::new().expect("tempdir");
     let cfg_path = dir.path().join("mcp.json");
 

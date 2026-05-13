@@ -16,11 +16,10 @@
 //!   [`crate::manager::paths::derive_server_name`] strips one extension
 //!   from `std::env::current_exe()`.
 //! - Existing-server warning and disable-missing warning — printed to
-//!   stdout exactly as PLAN §11 #4 and #5 require, no emoji prefix.
+//!   stdout with no emoji prefix.
 //!
-//! Claude (Task #4), Cursor (Task #5), and `VSCode` (Task #6) layer their
-//! own subcommand modules beside each other using the shared helpers below
-//! — see PLAN.md §3 module layout.
+//! Claude, Cursor, and `VSCode` layer their own subcommand modules beside
+//! each other using the shared helpers below.
 
 pub mod claude;
 pub mod cursor;

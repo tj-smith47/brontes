@@ -11,7 +11,7 @@
 //! order so `serde_json::to_string_pretty` writes byte-identical bytes to
 //! ophis for the same inputs.
 //!
-//! # Round-trip fidelity (PLAN line 566)
+//! # Round-trip fidelity
 //!
 //! brontes never **constructs** an [`super::Input`] (`mcp cursor enable`
 //! only writes to the server map), but user configs in the wild routinely
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn inputs_round_trip_preserves_both_password_states() {
-        // PLAN line 566: round-trip fixture must include both password=true
+        // Round-trip fixture must include both password=true
         // and password=false entries. password=false must be omitted from
         // the on-disk JSON (`omitempty`); both must reparse correctly.
         let raw = r#"{

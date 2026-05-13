@@ -121,7 +121,7 @@ pub mod __test_internal {
     /// Drive the same flag-rendering logic that `mcp start` / `mcp stream`
     /// use when translating a tool call's JSON `flags` map into argv.
     ///
-    /// The integration test crate uses this to assert that the §11 #7
+    /// The integration test crate uses this to assert that the
     /// nested-non-scalar `tracing::warn!` events fire as documented.
     #[must_use]
     pub fn render_flag_argv(
@@ -159,8 +159,8 @@ pub mod __test_internal {
     /// `ArgMatches`.
     ///
     /// Returns `Some(level)` on a recognized value, `None` on an
-    /// unrecognized value (which also emits the §11 #9 `tracing::warn!`
-    /// the warn-fire test crate asserts on).
+    /// unrecognized value (which also emits the unrecognized-value
+    /// `tracing::warn!` the warn-fire test crate asserts on).
     #[must_use]
     pub fn parse_start_log_level(matches: &clap::ArgMatches) -> Option<tracing::Level> {
         crate::subcommands::start::parse_log_level_for_test(matches)

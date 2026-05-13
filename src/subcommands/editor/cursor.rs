@@ -1,12 +1,12 @@
 //! `mcp cursor {enable, disable, list}` clap surface and dispatch.
 //!
 //! Mirrors ophis `internal/cfgmgr/cmd/cursor/{root,enable,disable,list}.go`
-//! with the divergences pinned by PLAN.md §11:
+//! with the following divergences:
 //!
 //! - No emoji prefix on the existing-server / disable-missing warnings.
 //! - JSON server map is a [`BTreeMap`] for byte-stable on-disk output.
 //! - `--workspace` is accepted on ALL THREE leaves (enable AND disable AND
-//!   list — PLAN line 573).
+//!   list).
 //!
 //! Path resolution defers to [`crate::manager::paths::cursor_config_path`]
 //! (user mode) or [`crate::manager::paths::cursor_workspace_path`]
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn disable_has_workspace_flag() {
-        // PLAN line 573: --workspace is accepted on ALL three leaves.
+        // --workspace is accepted on ALL three leaves.
         let cmd = build();
         let disable = cmd.find_subcommand("disable").expect("disable");
         let flags: Vec<&str> = disable
@@ -231,22 +231,21 @@ mod tests {
         assert!(flags.contains(&"server-name"));
         assert!(
             flags.contains(&"workspace"),
-            "disable must accept --workspace per PLAN line 573, got {flags:?}"
+            "disable must accept --workspace, got {flags:?}"
         );
         assert!(!flags.contains(&"env"), "disable must not carry --env");
     }
 
     #[test]
     fn list_has_workspace_flag() {
-        // PLAN line 573: --workspace is accepted on ALL three leaves,
-        // including list.
+        // --workspace is accepted on ALL three leaves, including list.
         let cmd = build();
         let list = cmd.find_subcommand("list").expect("list");
         let flags: Vec<&str> = list.get_arguments().map(|a| a.get_id().as_str()).collect();
         assert!(flags.contains(&"config-path"));
         assert!(
             flags.contains(&"workspace"),
-            "list must accept --workspace per PLAN line 573, got {flags:?}"
+            "list must accept --workspace, got {flags:?}"
         );
         assert!(!flags.contains(&"server-name"));
     }

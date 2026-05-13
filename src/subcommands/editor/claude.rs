@@ -1,7 +1,7 @@
 //! `mcp claude {enable, disable, list}` clap surface and dispatch.
 //!
 //! Mirrors ophis `internal/cfgmgr/cmd/claude/{root,enable,disable,list}.go`
-//! with the divergences pinned by PLAN.md §11:
+//! with the following divergences:
 //!
 //! - No emoji prefix on the existing-server / disable-missing warnings.
 //! - JSON server map is a [`BTreeMap`] for byte-stable on-disk output.

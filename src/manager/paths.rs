@@ -3,14 +3,13 @@
 //! Each helper mirrors the ophis `internal/cfgmgr/manager/<editor>/<editor>_{darwin,linux,windows}.go`
 //! family verbatim, lifted into a single Rust module that is `cfg`-gated by
 //! `target_os`. The Rust analog of Go's `os.UserHomeDir()` is
-//! [`dirs::home_dir`]; on `None` we take the per-row fallback chain
-//! documented in `PLAN.md` §3.1.
+//! [`dirs::home_dir`]; on `None` we take the per-row fallback chain.
 //!
-//! Tasks #5 (Cursor) and #6 (`VSCode`) layer their own resolvers next to
+//! Cursor and `VSCode` layer their own resolvers next to
 //! [`claude_config_path`] following the same `cfg`-gated shape; the trait of
 //! "primary path + fallback when home resolution fails" is the surface area
 //! every editor shares. `VSCode` and Cursor on Linux do NOT consult
-//! `XDG_CONFIG_HOME` — that is Claude-only behavior per PLAN line 313.
+//! `XDG_CONFIG_HOME` — that is Claude-only behavior.
 
 use std::path::PathBuf;
 
@@ -155,8 +154,7 @@ fn claude_config_path_windows_from(appdata: Option<&str>, userprofile: Option<&s
 ///
 /// Linux: `$HOME_DIR/.cursor/mcp.json`, falling back to
 /// `/home/$USER/.cursor/mcp.json` when home is unresolved. Cursor on Linux
-/// does NOT consult `XDG_CONFIG_HOME` — that's Claude-only behavior per
-/// PLAN line 313.
+/// does NOT consult `XDG_CONFIG_HOME` — that's Claude-only behavior.
 ///
 /// Windows: `$HOME_DIR/.cursor/mcp.json` (where `$HOME_DIR` is `dirs::home_dir`,
 /// which on Windows resolves `%USERPROFILE%`), falling back to
@@ -193,7 +191,7 @@ pub fn cursor_config_path() -> PathBuf {
 
 /// Cursor workspace-mode `mcp.json` path: `$CWD/.cursor/mcp.json`, falling
 /// back to the relative `.cursor/mcp.json` when `std::env::current_dir()`
-/// fails (matches ophis behavior per PLAN line 582).
+/// fails (matches ophis behavior).
 #[must_use]
 pub fn cursor_workspace_path() -> PathBuf {
     cursor_workspace_path_from(std::env::current_dir().ok().as_deref())
@@ -215,7 +213,7 @@ fn cursor_config_path_macos_from(home: Option<&std::path::Path>, user: &str) -> 
 
 /// Pure Linux resolver for Cursor user-mode. `home` is `Some` when
 /// `dirs::home_dir()` resolves; `user` is `$USER` for the home-unresolved
-/// branch. Cursor on Linux does NOT consult `XDG_CONFIG_HOME` (PLAN line 313).
+/// branch. Cursor on Linux does NOT consult `XDG_CONFIG_HOME`.
 #[cfg(any(
     target_os = "linux",
     not(any(target_os = "macos", target_os = "windows")),
@@ -253,7 +251,7 @@ fn cursor_config_path_windows_from(
 
 /// Pure workspace resolver. `cwd` is `Some` when `std::env::current_dir()`
 /// resolves; `None` (e.g. cwd deleted out from under us) falls back to the
-/// relative `.cursor/mcp.json` per PLAN line 582.
+/// relative `.cursor/mcp.json`.
 fn cursor_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
     if let Some(cwd) = cwd {
         return cwd.join(".cursor").join("mcp.json");
@@ -270,7 +268,7 @@ fn cursor_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
 /// Linux: `$HOME_DIR/.config/Code/User/mcp.json`, falling back to
 /// `/home/$USER/.config/Code/User/mcp.json` when home is unresolved.
 /// `VSCode` on Linux does NOT consult `XDG_CONFIG_HOME` — that's Claude-only
-/// behavior per PLAN line 313.
+/// behavior.
 ///
 /// Windows: `$HOME_DIR/AppData/Roaming/Code/User/mcp.json` (where
 /// `$HOME_DIR` is `dirs::home_dir`, which on Windows resolves
@@ -308,7 +306,7 @@ pub fn vscode_config_path() -> PathBuf {
 
 /// `VSCode` workspace-mode `mcp.json` path: `$CWD/.vscode/mcp.json`, falling
 /// back to the relative `.vscode/mcp.json` when `std::env::current_dir()`
-/// fails (matches ophis behavior per PLAN line 582).
+/// fails (matches ophis behavior).
 #[must_use]
 pub fn vscode_workspace_path() -> PathBuf {
     vscode_workspace_path_from(std::env::current_dir().ok().as_deref())
@@ -338,7 +336,7 @@ fn vscode_config_path_macos_from(home: Option<&std::path::Path>, user: &str) -> 
 
 /// Pure Linux resolver for `VSCode` user-mode. `home` is `Some` when
 /// `dirs::home_dir()` resolves; `user` is `$USER` for the home-unresolved
-/// branch. `VSCode` on Linux does NOT consult `XDG_CONFIG_HOME` (PLAN line 313).
+/// branch. `VSCode` on Linux does NOT consult `XDG_CONFIG_HOME`.
 #[cfg(any(
     target_os = "linux",
     not(any(target_os = "macos", target_os = "windows")),
@@ -388,7 +386,7 @@ fn vscode_config_path_windows_from(
     // (the home-prefix dropped) so we still produce *some* path the caller
     // can present to the user. The error surfaces at file open. ophis's
     // `vscode_windows.go` has no `C:\Users\Default` literal (that pattern
-    // is Claude-only per PLAN line 301), so a relative fallback is more
+    // is Claude-only), so a relative fallback is more
     // faithful to the parity goal than inventing one.
     PathBuf::from("AppData")
         .join("Roaming")
@@ -399,7 +397,7 @@ fn vscode_config_path_windows_from(
 
 /// Pure workspace resolver for `VSCode`. `cwd` is `Some` when
 /// `std::env::current_dir()` resolves; `None` (e.g. cwd deleted out from
-/// under us) falls back to the relative `.vscode/mcp.json` per PLAN line 582.
+/// under us) falls back to the relative `.vscode/mcp.json`.
 fn vscode_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
     if let Some(cwd) = cwd {
         return cwd.join(".vscode").join("mcp.json");
@@ -633,7 +631,7 @@ mod tests {
 
     #[test]
     fn cursor_linux_does_not_consult_xdg() {
-        // PLAN line 313: Cursor on Linux must NOT consult XDG_CONFIG_HOME.
+        // Cursor on Linux must NOT consult XDG_CONFIG_HOME.
         // The resolver signature doesn't even accept an XDG argument — this
         // test pins the surface so a future "let's consolidate the linux
         // resolvers" refactor doesn't accidentally route Cursor through XDG.
@@ -730,7 +728,7 @@ mod tests {
 
     #[test]
     fn vscode_linux_does_not_consult_xdg() {
-        // PLAN line 313: VSCode on Linux must NOT consult XDG_CONFIG_HOME.
+        // VSCode on Linux must NOT consult XDG_CONFIG_HOME.
         // The resolver signature doesn't even accept an XDG argument — this
         // test pins the surface so a future "let's consolidate the linux
         // resolvers" refactor doesn't accidentally route VSCode through XDG.
@@ -776,7 +774,7 @@ mod tests {
         // No home, no USERPROFILE — fall back to a relative path with the
         // home-prefix dropped, mirroring Cursor's tertiary shape. ophis's
         // `vscode_windows.go` has no `C:\Users\Default` literal (that
-        // pattern is Claude-only per PLAN line 301), so we do not invent
+        // pattern is Claude-only), so we do not invent
         // an absolute fallback here. The error surfaces at file open.
         let path = vscode_config_path_windows_from(None, None);
         assert_eq!(

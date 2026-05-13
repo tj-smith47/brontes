@@ -232,8 +232,8 @@ fn disable_removes_existing_server() {
 
 #[test]
 fn disable_missing_server_is_ok() {
-    // Per PLAN §11 #5: disable on a missing server name prints a warning
-    // and returns Ok(()) — not an error.
+    // Disable on a missing server name prints a warning and returns
+    // Ok(()) — not an error.
     let dir = TempDir::new().expect("tempdir");
     let cfg_path = dir.path().join("claude_desktop_config.json");
 

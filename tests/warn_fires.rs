@@ -8,17 +8,17 @@
 //!
 //! Coverage map (warn site → test fn):
 //!
-//! - `src/subcommands/start.rs::parse_log_level` (unknown level — §11 #9)
+//! - `src/subcommands/start.rs::parse_log_level` (unknown level)
 //!   → [`start_unknown_log_level_warns`]
 //! - `src/subcommands/stream.rs::parse_log_level` (same shape, separate
 //!   surface) → [`stream_unknown_log_level_warns`]
-//! - `src/exec.rs::append_flag` object-with-nested (§11 #7)
+//! - `src/exec.rs::append_flag` object-with-nested
 //!   → [`flag_object_with_nested_object_warns`],
 //!   [`flag_object_with_nested_array_warns`]
-//! - `src/exec.rs::append_scalar_flag` array-with-nested (§11 #7)
+//! - `src/exec.rs::append_scalar_flag` array-with-nested
 //!   → [`flag_array_with_nested_object_warns`],
 //!   [`flag_array_with_nested_array_warns`]
-//! - `src/command.rs` 64-char tool-name warn (PLAN line 537)
+//! - `src/command.rs` 64-char tool-name warn
 //!   → [`tool_name_over_64_chars_warns_once`]
 //! - `src/command.rs` selector substring no-match warn
 //!   → [`selector_substring_no_match_warns`]
@@ -50,7 +50,7 @@ use serde_json::json;
 use support::{assert_contains_all, capture_warns, capture_warns_async, count_occurrences};
 
 // ---------------------------------------------------------------------------
-// §11 #9 — unrecognized `--log-level`
+// unrecognized `--log-level`
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -109,7 +109,7 @@ fn start_known_log_level_does_not_warn() {
 }
 
 // ---------------------------------------------------------------------------
-// §11 #7 — flag-value nested-container handling
+// flag-value nested-container handling
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -219,7 +219,7 @@ fn flag_object_all_scalar_pairs_no_warn() {
 }
 
 // ---------------------------------------------------------------------------
-// PLAN line 537 — 64-char tool-name warn
+// 64-char tool-name warn
 // ---------------------------------------------------------------------------
 
 #[test]

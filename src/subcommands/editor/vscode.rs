@@ -1,12 +1,12 @@
 //! `mcp vscode {enable, disable, list}` clap surface and dispatch.
 //!
 //! Mirrors ophis `internal/cfgmgr/cmd/vscode/{root,enable,disable,list}.go`
-//! with the divergences pinned by PLAN.md §11:
+//! with the following divergences:
 //!
 //! - No emoji prefix on the existing-server / disable-missing warnings.
 //! - JSON server map is a [`BTreeMap`] for byte-stable on-disk output.
 //! - `--workspace` is accepted on ALL THREE leaves (enable AND disable AND
-//!   list — PLAN line 573).
+//!   list).
 //!
 //! Path resolution defers to [`crate::manager::paths::vscode_config_path`]
 //! (user mode) or [`crate::manager::paths::vscode_workspace_path`]
@@ -15,7 +15,7 @@
 //! value so the same binary path that tool calls spawn is the one written
 //! into `VSCode`'s config.
 //!
-//! # Group long-about asymmetry (PLAN line 714)
+//! # Group long-about asymmetry
 //!
 //! The `vscode` group's `long_about` uses the FULL form
 //! `"Visual Studio Code"`; every `vscode` leaf's `long_about` uses the
@@ -51,8 +51,8 @@ fn arg_workspace() -> Arg {
 /// [`run`].
 ///
 /// The group's `long_about` uses the FULL form `"Visual Studio Code"`,
-/// matching ophis `cmd/vscode/root.go` (PLAN line 714). The leaf
-/// `long_about` strings use the abbreviation `"VSCode"` (also PLAN line 714).
+/// matching ophis `cmd/vscode/root.go`. The leaf
+/// `long_about` strings use the abbreviation `"VSCode"`.
 pub fn build() -> Command {
     Command::new("vscode")
         .about("Manage VSCode MCP servers")
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn disable_has_workspace_flag() {
-        // PLAN line 573: --workspace is accepted on ALL three leaves.
+        // --workspace is accepted on ALL three leaves.
         let cmd = build();
         let disable = cmd.find_subcommand("disable").expect("disable");
         let flags: Vec<&str> = disable
@@ -246,22 +246,21 @@ mod tests {
         assert!(flags.contains(&"server-name"));
         assert!(
             flags.contains(&"workspace"),
-            "disable must accept --workspace per PLAN line 573, got {flags:?}"
+            "disable must accept --workspace, got {flags:?}"
         );
         assert!(!flags.contains(&"env"), "disable must not carry --env");
     }
 
     #[test]
     fn list_has_workspace_flag() {
-        // PLAN line 573: --workspace is accepted on ALL three leaves,
-        // including list.
+        // --workspace is accepted on ALL three leaves, including list.
         let cmd = build();
         let list = cmd.find_subcommand("list").expect("list");
         let flags: Vec<&str> = list.get_arguments().map(|a| a.get_id().as_str()).collect();
         assert!(flags.contains(&"config-path"));
         assert!(
             flags.contains(&"workspace"),
-            "list must accept --workspace per PLAN line 573, got {flags:?}"
+            "list must accept --workspace, got {flags:?}"
         );
         assert!(!flags.contains(&"server-name"));
     }
@@ -292,8 +291,8 @@ mod tests {
 
     #[test]
     fn group_long_uses_full_visual_studio_code_form() {
-        // PLAN line 714: the `vscode` group's `long_about` uses the FULL
-        // form "Visual Studio Code"; every `vscode` leaf's `long_about`
+        // The `vscode` group's `long_about` uses the FULL form
+        // "Visual Studio Code"; every `vscode` leaf's `long_about`
         // uses the abbreviation "VSCode". This asymmetry is pinned
         // verbatim — this test locks the surface against future
         // "normalization" drift.

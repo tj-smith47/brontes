@@ -108,8 +108,8 @@ pub fn build_command_args(tool_name: &str, input: &ToolInput) -> Vec<String> {
 }
 
 /// Translate one `(flag_name, JSON value)` pair into the argv tokens it
-/// produces. Mirrors ophis `parseFlagArgValue` semantics with the divergence
-/// notes documented in PLAN §11.
+/// produces. Mirrors ophis `parseFlagArgValue` semantics with the divergences
+/// noted on the individual helpers below.
 fn append_flag(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str) {
     // Parity with ophis `execute.go:84-86`: empty key or null value → skip.
     if name.is_empty() || value.is_null() {
@@ -333,8 +333,9 @@ async fn read_capped<R: AsyncRead + Unpin>(
 //
 // `append_flag` and `read_capped` are private implementation details; the
 // warn-fire integration test crate (`tests/warn_fires.rs`) needs to drive
-// them directly so the §11 #7 / OUTPUT_CAP_BYTES `tracing::warn!` events
-// can be asserted without spinning up a full MCP server + subprocess.
+// them directly so the nested-container and `OUTPUT_CAP_BYTES`
+// `tracing::warn!` events can be asserted without spinning up a full MCP
+// server + subprocess.
 // ---------------------------------------------------------------------------
 
 /// Test-only proxy for [`append_flag`]. Exposed via

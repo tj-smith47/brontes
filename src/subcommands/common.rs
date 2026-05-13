@@ -2,9 +2,8 @@
 //!
 //! Currently hosts [`parse_log_level`], which both `mcp start` and
 //! `mcp stream` need with byte-identical semantics — including the
-//! `tracing::warn!` on unrecognized values that PLAN §11 #9 pins as
-//! a deliberate divergence from ophis (which silently maps unknown
-//! levels to `Info`).
+//! `tracing::warn!` on unrecognized values that is a deliberate
+//! divergence from ophis (which silently maps unknown levels to `Info`).
 
 use clap::ArgMatches;
 use tracing::Level;
@@ -14,7 +13,7 @@ use tracing::Level;
 /// Invalid values return `None` (i.e., fall through to `Config::log_level`
 /// or `RUST_LOG`); a `tracing::warn!` records the offending value so users
 /// notice the typo at startup rather than wondering why their level had
-/// no effect. PLAN §11 #9 documents this divergence from ophis's silent
+/// no effect. This is a deliberate divergence from ophis's silent
 /// fallback to `Info`.
 ///
 /// Shared between `mcp start` (stdio transport) and `mcp stream`

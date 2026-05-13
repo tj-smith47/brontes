@@ -5,17 +5,16 @@
 //! brontes emits `tracing::warn!` at several sites that encode user-facing
 //! behavior contracts:
 //!
-//! - PLAN §11 #7 (flag-value nested-container handling): when a tool call's
-//!   JSON flag value contains a nested object/array that cannot be rendered
-//!   as a scalar argv token, brontes warns and skips rather than passing the
+//! - Flag-value nested-container handling: when a tool call's JSON flag
+//!   value contains a nested object/array that cannot be rendered as a
+//!   scalar argv token, brontes warns and skips rather than passing the
 //!   value through verbatim like ophis does.
-//! - PLAN §11 #9 (unknown `--log-level` policy): brontes warns on an
-//!   unrecognized level and falls back to `INFO`; ophis silently maps to
-//!   `INFO`. The warn surfaces typos at startup rather than letting the
-//!   user wonder why their level had no effect.
-//! - PLAN line 537 (Phase 2 acceptance gate): the 64-character MCP tool
-//!   name warn fires exactly once per offending tool so consumers know to
-//!   set `Config::tool_name_prefix`.
+//! - Unknown `--log-level` policy: brontes warns on an unrecognized level
+//!   and falls back to `INFO`; ophis silently maps to `INFO`. The warn
+//!   surfaces typos at startup rather than letting the user wonder why
+//!   their level had no effect.
+//! - 64-character MCP tool name warn: fires exactly once per offending
+//!   tool so consumers know to set `Config::tool_name_prefix`.
 //! - `OUTPUT_CAP_BYTES` soft-cap exhaustion: a runaway tool subprocess
 //!   that floods stdout/stderr is silently truncated, with one warn per
 //!   stream so operators see the truncation in their logs.
