@@ -733,12 +733,14 @@ mod tests {
         // test pins the surface so a future "let's consolidate the linux
         // resolvers" refactor doesn't accidentally route VSCode through XDG.
         let path = vscode_config_path_linux_from(Some(Path::new("/home/synthetic")), "synthetic");
-        let s = path.to_string_lossy();
         // The resolver MUST produce `$HOME/.config/Code/User/mcp.json` — the
         // `.config` segment here is part of the VSCode-specific path layout,
-        // NOT an XDG redirect. Pin the literal expected path so a refactor
-        // that swaps in XDG can't accidentally pass this assertion.
-        assert_eq!(s, "/home/synthetic/.config/Code/User/mcp.json");
+        // NOT an XDG redirect. Compare component-wise (via PathBuf equality)
+        // so the assertion remains portable across host OSes.
+        assert_eq!(
+            path,
+            PathBuf::from("/home/synthetic/.config/Code/User/mcp.json")
+        );
     }
 
     // ── VSCode (user) Windows resolver ────────────────────────────────
