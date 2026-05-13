@@ -28,12 +28,7 @@ use clap::{Arg, ArgAction, Command};
 
 #[tokio::main]
 async fn main() -> brontes::Result<()> {
-    // The clap root is named `make` (not `make-mcp`) so the brontes substring
-    // filter — which excludes any path containing the `mcp` group name — does
-    // not accidentally drop every tool in this CLI. The produced binary is
-    // still `target/debug/examples/make-mcp` (the Cargo `[[example]]` stanza
-    // controls the binary name independently from the clap `Command::new`).
-    let cli = Command::new("make")
+    let cli = Command::new("make-mcp")
         .version("0.1.0")
         .about("Run GNU make targets via MCP")
         .subcommand(

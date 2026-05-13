@@ -25,14 +25,17 @@
 //! `PossibleValuesParser`, `ArgAction::Append` (array) and `ArgAction::Count`
 //! (integer) flags, a leaf with `.after_help(...)` (Examples block in the
 //! description), a global flag inherited by every leaf, a deprecated leaf
-//! (filtered out via `Config::deprecate`), and a leaf named `helpful`
-//! filtered by the `"help"` substring rule.
+//! (filtered out via `Config::deprecate`), and a leaf named `completion`
+//! filtered by the segment-equality rule (the leaf's last segment is
+//! exactly the reserved needle `"completion"`).
 //!
 //! Leaves expected in the golden output: `act foo`, `act bar`, `act baz`.
 //! Leaves expected to be absent: `act legacy` (deprecated) and
-//! `edge helpful` (filtered by the substring-on-path rule — `"help"` is a
-//! substring of `"helpful"`, this is the documented quirk in
-//! `walk::should_filter`).
+//! `edge completion` (filtered by the segment-equality rule in
+//! `walk::should_filter` — the leaf's last segment equals the reserved
+//! needle `"completion"`; `help` cannot be used as the fixture name
+//! because clap auto-injects a `help` subcommand and refuses a duplicate
+//! at build time).
 //!
 //! # Group commands do NOT surface as tools
 //!
@@ -58,7 +61,11 @@ const FIXTURE_PATH: &str = "tests/fixtures/generate_tools_golden.json";
 ///   │     ├── baz     — enum + Count + hidden + optional positional
 ///   │     └── legacy  — marked deprecated → filtered
 ///   └── edge  (group-only; subcommand_required)
-///         └── helpful — filtered by the "help" substring rule
+///         └── completion — filtered by the segment-equality rule
+///                          (segment exactly equals the reserved needle
+///                          "completion"; `help` cannot be used because
+///                          clap auto-injects a `help` subcommand and
+///                          would refuse a duplicate)
 /// ```
 fn fixture_tree() -> Command {
     Command::new("golden-cli")
@@ -156,11 +163,12 @@ fn fixture_tree() -> Command {
                 .about("Edge-case leaves")
                 .subcommand_required(true)
                 .subcommand(
-                    // Substring-collision: "helpful" contains "help",
-                    // so walk::should_filter excludes it. Documented in the
+                    // Segment-equality match: the leaf's last segment is
+                    // exactly the reserved needle "completion", so
+                    // walk::should_filter excludes it. Documented in the
                     // module doc above.
-                    Command::new("helpful")
-                        .about("Filtered by the help-substring rule")
+                    Command::new("completion")
+                        .about("Filtered by the completion segment-equality rule")
                         .arg(Arg::new("note").long("note").help("A note")),
                 ),
         )

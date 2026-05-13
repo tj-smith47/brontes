@@ -42,7 +42,7 @@ pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
     out
 }
 
-/// Per the filter order: hidden → deprecated → group-only → substring.
+/// Per the filter order: hidden → deprecated → group-only → segment-match.
 /// Returns `true` if `cmd` should be EXCLUDED from the tool list.
 pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
     // 1. Hidden commands are never exposed as tools.
@@ -62,18 +62,22 @@ pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
         return true;
     }
 
-    // 4. Substring filter: remove the brontes subtree itself, the auto-injected
-    //    `help` command, and any shell-completion command. The match is against
-    //    the full space-joined path so that `myapp mcp install` is caught when
-    //    `command_name == "mcp"`.
+    // 4. Segment-equality filter: remove the brontes subtree itself, the
+    //    auto-injected `help` command, and any shell-completion command. The
+    //    match is against space-delimited segments of the joined path so that
+    //    `myapp mcp install` is caught (the middle segment equals `mcp`) but a
+    //    consumer CLI named `make-mcp` or `my-mcp-tool` is NOT — its root
+    //    segment merely *contains* `"mcp"` as a substring; no segment is
+    //    exactly equal to it.
     let command_name = cfg.command_name.as_deref().unwrap_or("mcp");
-    // Substring (not exact-match) by design — matches the ophis filter shape.
-    // Consequence: a user command named "helpful" or "completion-server" will be
-    // filtered because "help" / "completion" appear as substrings. Escape hatch for
-    // the `command_name` token: rename via `Config.command_name` (the user-facing
-    // knob that exists precisely for this).
+    // Segment-equality (not substring). Earlier brontes ports used the ophis
+    // substring shape, but the substring rule mis-filters consumer CLIs whose
+    // root name happens to contain one of the needles (`make-mcp`, `helpful`,
+    // `completionish`). Segment equality keeps the original intent — drop any
+    // path that traverses through a `command_name`, `help`, or `completion`
+    // node — without false positives on similarly-named roots.
     let needles = [command_name, "help", "completion"];
-    if needles.iter().any(|n| path.contains(n)) {
+    if path.split(' ').any(|segment| needles.contains(&segment)) {
         return true;
     }
 
@@ -220,8 +224,9 @@ mod tests {
     }
 
     #[test]
-    fn mcp_cmd_filtered_by_substring() {
-        // "mcp" is the default command_name; any path containing "mcp" is filtered.
+    fn mcp_cmd_filtered_by_segment() {
+        // "mcp" is the default command_name; any path whose segment equals
+        // "mcp" exactly is filtered.
         let cmd = Command::new("mcp");
         let cfg = Config::default();
         assert!(should_filter(&cmd, "mcp", &cfg));
@@ -268,27 +273,150 @@ mod tests {
         assert_eq!(cfg.command_name.as_deref().unwrap_or("mcp"), "mcp");
     }
 
-    // ── Substring quirk: false positives on similar names ──────────────────
+    // ── Segment-equality: similar-named segments are NOT filtered ──────────
+    //
+    // Earlier brontes ports used a substring rule (matching ophis's
+    // `AllowCmdsContaining`-flavoured filter). That misfired on consumer CLIs
+    // whose root name happened to contain one of the needles (`make-mcp`,
+    // `helpful`, `completionish`) — every tool in those trees was filtered
+    // because the root segment substring-matched. Segment equality keeps the
+    // intent (drop nodes whose path traverses through `command_name`, `help`,
+    // or `completion`) without those false positives.
 
     #[test]
-    fn substring_filter_catches_inner_help_token() {
-        // Pin the substring-not-exact-match quirk: a command named "helpful" is
-        // filtered because "help" appears in its path.
+    fn segment_filter_skips_helpful_when_no_segment_equals_help() {
+        // "helpful" merely contains "help" — no segment equals "help" exactly.
         let cmd = Command::new("helpful");
         let cfg = Config::default();
         assert!(
-            should_filter(&cmd, "myapp helpful", &cfg),
-            "substring 'help' matches inside 'helpful' — intentional quirk"
+            !should_filter(&cmd, "myapp helpful", &cfg),
+            "segment-equality rule must not filter 'helpful'"
         );
     }
 
     #[test]
-    fn substring_filter_catches_inner_completion_token() {
+    fn segment_filter_skips_completionish_when_no_segment_equals_completion() {
         let cmd = Command::new("completionish");
         let cfg = Config::default();
         assert!(
-            should_filter(&cmd, "myapp completionish", &cfg),
-            "substring 'completion' matches inside 'completionish' — intentional quirk"
+            !should_filter(&cmd, "myapp completionish", &cfg),
+            "segment-equality rule must not filter 'completionish'"
         );
+    }
+
+    #[test]
+    fn segment_filter_filters_exact_help_segment() {
+        let cmd = Command::new("help");
+        let cfg = Config::default();
+        assert!(
+            should_filter(&cmd, "myapp help", &cfg),
+            "segment equal to 'help' must be filtered"
+        );
+    }
+
+    #[test]
+    fn segment_filter_filters_exact_completion_segment() {
+        let cmd = Command::new("completion");
+        let cfg = Config::default();
+        assert!(
+            should_filter(&cmd, "myapp completion", &cfg),
+            "segment equal to 'completion' must be filtered"
+        );
+    }
+
+    #[test]
+    fn segment_filter_catches_mcp_segment_in_middle() {
+        // `foo mcp install` — middle segment equals the command_name.
+        let cmd = Command::new("install");
+        let cfg = Config::default();
+        assert!(
+            should_filter(&cmd, "foo mcp install", &cfg),
+            "interior segment equal to 'mcp' must be filtered"
+        );
+    }
+
+    // ── make-mcp-style consumer root: substring-not-segment safety ─────────
+
+    #[test]
+    fn segment_filter_allows_make_mcp_root_and_descendants() {
+        // Root name "make-mcp" contains the substring "mcp" but no segment
+        // equals "mcp". Both the root and a leaf under it must survive.
+        let cmd_root = Command::new("make-mcp");
+        let cfg = Config::default();
+        assert!(
+            !should_filter(&cmd_root, "make-mcp", &cfg),
+            "make-mcp root must not be filtered by the segment rule"
+        );
+        let cmd_leaf = Command::new("build");
+        assert!(
+            !should_filter(&cmd_leaf, "make-mcp build", &cfg),
+            "make-mcp leaf must not be filtered by the segment rule"
+        );
+    }
+
+    #[test]
+    fn segment_filter_catches_mcp_segment_inside_make_mcp_tree() {
+        // The make-mcp consumer attaches `brontes::command(...)` as the `mcp`
+        // subtree; THAT subtree should still be filtered because its second
+        // segment equals "mcp" exactly.
+        let cmd = Command::new("mcp");
+        let cfg = Config::default();
+        assert!(
+            should_filter(&cmd, "make-mcp mcp", &cfg),
+            "make-mcp's nested `mcp` subtree must be filtered"
+        );
+        let cmd_leaf = Command::new("tools");
+        assert!(
+            should_filter(&cmd_leaf, "make-mcp mcp tools", &cfg),
+            "make-mcp's `mcp tools` leaf must be filtered"
+        );
+    }
+
+    // ── §11.11 pinning: group-only rule is the brontes substitute ──────────
+    //
+    // ophis filters any cobra.Command with `Run==nil && RunE==nil &&
+    // PreRun==nil && PreRunE==nil`. clap has no `Run` field — every clap
+    // command is dispatched by the user's `match` arm, and the library
+    // cannot introspect dispatch intent. brontes ports the **subset** of
+    // ophis's filter that survives the model gap: group-only (subcommand
+    // required AND no user args).
+    //
+    // The cases below pin the current behaviour so future drift is caught:
+    //
+    // 1. group: subcommand_required, no user args            → FILTERED
+    // 2. group with user args: subcommand_required + arg     → NOT filtered
+    // 3. degenerate leaf: no subcommands, no user args       → NOT filtered
+    //
+    // Case (3) is the inverse of ophis's `Run == nil` leaf filter. clap
+    // cannot detect "user forgot to wire this leaf into a match arm" — every
+    // attached leaf is presumed intended. Filtering case (3) would silently
+    // drop legitimate dispatch-by-name leaves (e.g. `mycli ping` with no
+    // flags or subcommands). The non-port stands. See PLAN.md §11.
+
+    #[test]
+    fn pin_group_only_subcommand_required_no_args_is_filtered() {
+        let cmd = Command::new("group")
+            .subcommand_required(true)
+            .subcommand(Command::new("leaf"));
+        let cfg = Config::default();
+        assert!(should_filter(&cmd, "myapp group", &cfg));
+    }
+
+    #[test]
+    fn pin_leaf_with_user_args_is_not_filtered() {
+        let cmd = Command::new("leaf").arg(Arg::new("name").long("name"));
+        let cfg = Config::default();
+        assert!(!should_filter(&cmd, "myapp leaf", &cfg));
+    }
+
+    #[test]
+    fn pin_degenerate_leaf_no_args_no_subs_is_not_filtered() {
+        // Inverse of ophis's `Run == nil` leaf filter. clap cannot
+        // distinguish "intentional dispatch-by-name leaf" from "accidentally
+        // wired stub", so this leaf survives. Locks the §11 non-port against
+        // future drift.
+        let cmd = Command::new("ping");
+        let cfg = Config::default();
+        assert!(!should_filter(&cmd, "myapp ping", &cfg));
     }
 }

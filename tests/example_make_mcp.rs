@@ -101,17 +101,20 @@ fn mcp_tools_emits_build_tool_with_required_directory_flag() {
         .as_array()
         .expect("mcp-tools.json must be a JSON array of tool descriptors");
 
-    // The example surfaces both the root (`make`) and the `make_build` leaf;
-    // only the leaf carries the required `directory` flag.
+    // The example surfaces both the root (`make-mcp`) and the
+    // `make-mcp_build` leaf; only the leaf carries the required `directory`
+    // flag. `build_tool_name` only collapses spaces to underscores; hyphens
+    // inside path segments are preserved verbatim, so the consumer-visible
+    // root name `make-mcp` survives intact.
     let build_tool = tools
         .iter()
-        .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("make_build"))
+        .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("make-mcp_build"))
         .unwrap_or_else(|| {
             let names: Vec<&str> = tools
                 .iter()
                 .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
                 .collect();
-            panic!("expected a tool named `make_build`, got names: {names:?}");
+            panic!("expected a tool named `make-mcp_build`, got names: {names:?}");
         });
 
     // The required-flag schema path puts required flag names under
@@ -126,6 +129,6 @@ fn mcp_tools_emits_build_tool_with_required_directory_flag() {
     let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
     assert!(
         names.contains(&"directory"),
-        "`directory` must appear in the required flag list for make_build; got {names:?}"
+        "`directory` must appear in the required flag list for make-mcp_build; got {names:?}"
     );
 }

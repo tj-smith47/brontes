@@ -105,43 +105,60 @@ fn annotation_with_whitespace_key_is_strict_equality() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Substring filter — `helpful` is filtered because `help` is a substring
+// 3. Segment-equality filter — `helpful` is NOT filtered, `help` IS
 // ---------------------------------------------------------------------------
 
 #[test]
-fn command_named_helpful_is_filtered_by_substring_rule() {
-    // The substring filter in src/walk.rs::should_filter uses
-    // `path.contains("help")`, NOT word-boundary matching. So a command
-    // named `helpful` has path `"testcli helpful"`, which contains the
-    // `"help"` substring and is filtered out.
+fn command_named_helpful_survives_segment_equality_filter() {
+    // The filter in src/walk.rs::should_filter splits the joined path on
+    // spaces and excludes any path where one segment is exactly equal to
+    // a needle (`command_name`, `"help"`, or `"completion"`). A command
+    // named `helpful` has path `"testcli helpful"` — no segment equals
+    // `"help"` exactly, so it survives.
     //
-    // Documented as intentional in src/walk.rs (lines 65-78). The
-    // user-facing escape hatch is `Config::command_name`, but that only
-    // renames the `mcp` subtree — `help` and `completion` are hard-coded
-    // needles. This is the price of substring-on-path matching versus
-    // name-equality matching.
-    //
-    // Future improvement opportunity (NOT blocked here): allow consumers
-    // to disable the `help` / `completion` needles, or scope them to
-    // first-token-of-path. Pinning the present behavior so any future
-    // shift is intentional and visible in the test diff.
+    // Pins the segment-equality behaviour against accidental drift back to
+    // substring matching, which would mis-filter consumer CLIs whose root
+    // happens to contain a needle (`make-mcp`, `helpful`, `completionish`).
     let root = Command::new("testcli")
         .subcommand_required(true)
-        .subcommand(Command::new("helpful").about("A helpful command, but filtered"));
+        .subcommand(Command::new("helpful").about("A helpful command"));
 
-    let tools = brontes::generate_tools(&root, &Config::default())
-        .expect("substring-filtered tree must still generate without error");
+    let tools =
+        brontes::generate_tools(&root, &Config::default()).expect("generate_tools must succeed");
 
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
-        !names.iter().any(|n| n.contains("helpful")),
-        "command named `helpful` must be filtered by the `help` substring rule, got: {names:?}"
+        names.contains(&"testcli_helpful"),
+        "command named `helpful` must NOT be filtered (no segment equals `help`), got: {names:?}"
     );
-    // The group-only root (`subcommand_required(true)`, no user args) is
-    // also filtered, so the tool list ends up empty for this tree.
+}
+
+#[test]
+fn command_named_mcp_is_filtered_by_segment_equality_rule() {
+    // Pin the positive side of the segment-equality rule via the
+    // `command_name` default (`"mcp"`). The `"help"` and `"completion"`
+    // needles cannot be exercised end-to-end through `generate_tools`
+    // because clap refuses to register user subcommands named `help` (it
+    // clashes with the auto-injected help command); `mcp` is the
+    // canonical filterable segment, which is the consumer-visible case
+    // anyway — the brontes-injected mcp subtree.
+    let root = Command::new("testcli")
+        .subcommand_required(true)
+        .subcommand(Command::new("mcp").about("Leaf whose name equals the default command_name"));
+
+    let tools =
+        brontes::generate_tools(&root, &Config::default()).expect("generate_tools must succeed");
+
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.iter().any(|n| n.ends_with("_mcp")),
+        "leaf segment exactly equal to `mcp` must be filtered, got: {names:?}"
+    );
+    // Root is group-only (subcommand_required + no user args) so it is
+    // filtered; the `mcp` leaf is segment-filtered. Net: zero tools.
     assert!(
         tools.is_empty(),
-        "expected zero tools (group-only root + substring-filtered `helpful` leaf), got: {names:?}"
+        "expected zero tools (group-only root + mcp-segment leaf), got: {names:?}"
     );
 }
 
