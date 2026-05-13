@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
-## [0.1.0] - YYYY-MM-DD
+## [0.1.0] - 2026-05-13
 
 Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers, inspired by [njayp/ophis](https://github.com/njayp/ophis).
 
