@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [master]
 
+# Workflow-level write permission so the `coverage` job can push the
+# shields-endpoint JSON to the orphan `badges` branch, and the `tag` job
+# can push the auto-tag back to master. PR events from forks override
+# this with their own restricted token, so granting write here does not
+# widen attack surface from fork PRs.
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -135,8 +143,6 @@ jobs:
     if: github.ref == 'refs/heads/master'
     needs: [fmt, clippy, test, msrv, docs, audit, deny]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
