@@ -95,6 +95,16 @@ pub use tool::{ToolInput, ToolOutput};
 pub mod __test_internal {
     pub use crate::server::BrontesServer;
     pub use crate::server::http::serve_http;
+    /// Re-exported HTTP-server internals so the warn-fire test crate can
+    /// drive `serve_http_with` against a faulty acceptor and a compressed
+    /// shutdown grace — see `tests/warn_fires.rs` for the two assertions.
+    pub use crate::server::http::{
+        Acceptor, SHUTDOWN_GRACE, TokioTcpAcceptor, bind_default_acceptor, serve_http_with,
+    };
+    /// Re-exported [`hyper_util::rt::TokioIo`] so the warn-fire test crate
+    /// can satisfy the [`Acceptor::accept`] return type without taking
+    /// `hyper-util` as a dev-dependency (it is already a main dep).
+    pub use hyper_util::rt::TokioIo;
 
     /// Drive the same flag-rendering logic that `mcp start` / `mcp stream`
     /// use when translating a tool call's JSON `flags` map into argv. The

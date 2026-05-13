@@ -26,6 +26,12 @@
 //!   → [`read_capped_stdout_emits_one_warn`],
 //!   [`read_capped_stderr_emits_one_warn`]
 //!
+//! - `src/server/http.rs::serve_http_with` accept-loop failure
+//!   (faulty `Acceptor`) → [`http_accept_failure_emits_continuing_warn`]
+//! - `src/server/http.rs::serve_http_with` grace-window exceeded
+//!   (idle TCP client + compressed grace) →
+//!   [`http_grace_window_exceeded_emits_warn`]
+//!
 //! Uncovered (surfaced as SUGGESTs in the implementer report, not in CI):
 //!
 //! - `src/server/{stdio,http}.rs` signal-handler install failures —
@@ -33,12 +39,6 @@
 //!   conditions; testing requires either injecting a faulty signal
 //!   source (production refactor) or running under a constrained
 //!   process namespace. Out of scope for this task.
-//! - `src/server/http.rs` `accept failed; continuing` — provoking a
-//!   `TcpListener::accept` error mid-loop without breaking the listener
-//!   itself is fiddly across OSes; left as a follow-up.
-//! - `src/server/http.rs` `connections did not drain within ...` —
-//!   requires holding a connection open past `SHUTDOWN_GRACE` (5s);
-//!   left out to keep the test suite fast.
 
 mod support;
 
@@ -414,5 +414,199 @@ fn read_capped_under_cap_no_warn() {
     assert!(
         !captured.contains("tool output exceeded soft cap"),
         "below-cap must not warn; captured: {captured}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// HTTP transport — `accept failed; continuing` and grace-window warns
+//
+// Both tests drive [`serve_http_with`] via the `__test_internal` re-export so
+// the production accept loop is exercised end-to-end. The grace test uses a
+// compressed `shutdown_grace` so the suite stays fast.
+// ---------------------------------------------------------------------------
+
+use std::future::{Future, pending};
+use std::io;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::sync::CancellationToken;
+
+use brontes::__test_internal::{Acceptor, TokioIo, serve_http_with};
+
+/// Faulty acceptor for the `accept failed; continuing` warn-fire path.
+///
+/// First call: returns `Err(io::ErrorKind::Other)` — production warns and
+/// loops. Subsequent calls: `pending().await` forever, so the outer
+/// `cancel.cancelled()` branch wins once the test fires the token. This
+/// avoids a tight-spin between the faulty acceptor and the warn site.
+struct FaultyAcceptor {
+    calls: AtomicUsize,
+}
+
+impl FaultyAcceptor {
+    fn new() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl Acceptor for FaultyAcceptor {
+    fn accept(&self) -> impl Future<Output = io::Result<(TokioIo<TcpStream>, SocketAddr)>> + Send {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        async move {
+            if n == 0 {
+                Err(io::Error::other("synthetic accept failure"))
+            } else {
+                // Never resolve; the outer `cancel.cancelled()` branch
+                // of the select! in `serve_http_with` wins instead.
+                pending::<io::Result<(TokioIo<TcpStream>, SocketAddr)>>().await
+            }
+        }
+    }
+}
+
+#[test]
+fn http_accept_failure_emits_continuing_warn() {
+    let cancel = CancellationToken::new();
+    let inner_cancel = cancel.clone();
+
+    let captured = futures::executor::block_on(async move {
+        let ((), log) = capture_warns_async(async move {
+            let acceptor = FaultyAcceptor::new();
+            let cli = clap::Command::new("brontes-warn-accept")
+                .version("0.0.1")
+                .subcommand(clap::Command::new("greet").about("Say hi"));
+
+            let server = tokio::spawn(async move {
+                serve_http_with(
+                    cli,
+                    Config::default(),
+                    acceptor,
+                    inner_cancel,
+                    vec![],
+                    // Short grace so even if drain stalls the test stays fast.
+                    Duration::from_millis(50),
+                )
+                .await
+                .expect("serve_http_with returns Ok after cancellation");
+            });
+
+            // Give the accept loop time to consume the first Err and
+            // emit the warn before we cancel.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel.cancel();
+
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("serve_http_with exits within 5s of cancellation")
+                .expect("server task did not panic");
+        })
+        .await;
+        log
+    });
+
+    assert_contains_all(
+        &captured,
+        &[
+            "WARN",
+            "accept failed; continuing",
+            // Production renders the synthetic message via `error = %e`.
+            "synthetic accept failure",
+        ],
+    );
+    // Belt and braces: the faulty acceptor returns the error once, so the
+    // warn must fire exactly once. Multiple fires would indicate the loop
+    // re-polled the same already-consumed error, which would be a tight
+    // spin in production.
+    assert_eq!(
+        count_occurrences(&captured, "accept failed; continuing"),
+        1,
+        "accept-failure warn must fire exactly once per error; captured:\n{captured}"
+    );
+}
+
+#[test]
+fn http_grace_window_exceeded_emits_warn() {
+    // Compressed grace + an idle (HTTP-silent) TCP client keeps the
+    // per-connection task in hyper's read loop past the 50ms grace so
+    // `tracker.wait()` times out and the warn fires.
+    let captured = futures::executor::block_on(async move {
+        let ((), log) = capture_warns_async(async move {
+            // Bind a real listener at 127.0.0.1:0 (production acceptor
+            // path — this exercises `TokioTcpAcceptor` itself).
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind ephemeral port");
+            let addr: SocketAddr = listener.local_addr().expect("local_addr");
+            let acceptor = brontes::__test_internal::TokioTcpAcceptor::new(listener);
+
+            let cancel = CancellationToken::new();
+            let server_cancel = cancel.clone();
+            let cli = clap::Command::new("brontes-warn-grace")
+                .version("0.0.1")
+                .subcommand(clap::Command::new("greet").about("Say hi"));
+
+            let server = tokio::spawn(async move {
+                serve_http_with(
+                    cli,
+                    Config::default(),
+                    acceptor,
+                    server_cancel,
+                    vec![],
+                    Duration::from_millis(50),
+                )
+                .await
+                .expect("serve_http_with returns Ok after cancellation");
+            });
+
+            // Open a TCP connection and send a partial HTTP request line
+            // (no `\r\n\r\n` terminator). hyper stays in the request-line
+            // read loop waiting for more bytes; `graceful_shutdown` flips
+            // the no-new-keepalive flag but cannot abort the in-flight
+            // read, so the per-connection task hangs past the 50ms grace.
+            let mut client = TcpStream::connect(addr)
+                .await
+                .expect("connect to test server");
+            // Half a request line — enough that hyper sees bytes and
+            // commits to parsing, not so much that hyper completes parsing.
+            client
+                .write_all(b"GET /")
+                .await
+                .expect("write partial request");
+            // Yield to let the server task accept the connection and
+            // enter the hyper read loop before we cancel.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            cancel.cancel();
+
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("serve_http_with exits within 5s of cancellation")
+                .expect("server task did not panic");
+
+            // Keep the client alive until after the server has exited so
+            // hyper does not see the socket close before the grace window
+            // elapses; drop it now.
+            drop(client);
+        })
+        .await;
+        log
+    });
+
+    assert_contains_all(
+        &captured,
+        &[
+            "WARN",
+            "did not drain within",
+            // Compressed grace renders via `Debug` of `Duration` — the
+            // production format string is `{shutdown_grace:?}`, which for
+            // 50ms is `50ms`.
+            "50ms",
+        ],
     );
 }
