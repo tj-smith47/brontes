@@ -99,3 +99,37 @@ jobs:
         with:
           tool: cargo-deny
       - run: cargo deny check
+
+  # Auto-tag: on master only, after every other check passes, mint the next
+  # tag via `anodizer tag` and push it. Tag push triggers .github/workflows/release.yml.
+  #
+  # Gate semantics: anodizer tag itself decides whether to mint a tag from
+  # Conventional Commits in the range (default_bump: none in .anodizer.yaml
+  # means a feat/fix/perf signal is required). A range of only chore/docs/
+  # style/refactor/test commits no-ops cleanly.
+  tag:
+    name: Auto-tag
+    if: github.ref == 'refs/heads/master'
+    needs: [fmt, clippy, test, msrv, docs, audit, deny]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # GH_PAT (not GITHUB_TOKEN) so the tag push triggers release.yml.
+          # GITHUB_TOKEN-authored pushes don't trigger downstream workflows.
+          token: ${{ secrets.GH_PAT }}
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Run anodizer tag
+        uses: tj-smith47/anodizer-action@v1
+        with:
+          from-source: true
+          install-rust: false
+          args: tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
