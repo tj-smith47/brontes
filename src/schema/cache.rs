@@ -14,7 +14,7 @@ use rmcp::model::JsonObject;
 ///
 /// The value is computed once and then shared; callers that need a mutable
 /// copy should use [`fresh_tool_input_schema`].
-pub(crate) static TOOL_INPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
+pub static TOOL_INPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
     LazyLock::new(|| Arc::new(build_schema::<crate::tool::ToolInput>()));
 
 /// Cached base schema for [`crate::tool::ToolOutput`].
@@ -22,7 +22,7 @@ pub(crate) static TOOL_INPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
 /// The value is computed once and then shared.  Because the output shape is
 /// invariant per tool, [`crate::schema::build_output_schema`] shares this
 /// single [`Arc`] across every tool rather than cloning the map.
-pub(crate) static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
+pub static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
     LazyLock::new(|| Arc::new(build_schema::<crate::tool::ToolOutput>()));
 
 /// Generate the root JSON Schema for `T` and return it as a [`JsonObject`].
@@ -48,7 +48,7 @@ fn build_schema<T: schemars::JsonSchema>() -> JsonObject {
 /// Each call returns an independent copy.  Mutating the returned map does not
 /// affect the cached singleton; wrap the result in [`Arc::new`] before handing
 /// it to `rmcp`.
-pub(crate) fn fresh_tool_input_schema() -> JsonObject {
+pub fn fresh_tool_input_schema() -> JsonObject {
     (**TOOL_INPUT_BASE_SCHEMA).clone()
 }
 

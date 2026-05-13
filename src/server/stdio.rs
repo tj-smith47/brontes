@@ -39,7 +39,7 @@ use crate::server::BrontesServer;
 ///   negotiate the MCP handshake.
 /// - [`crate::Error::Panic`] if the awaited rmcp service task panics
 ///   (the underlying tokio `JoinError`).
-pub(crate) async fn serve_stdio(
+pub async fn serve_stdio(
     cli: Command,
     cfg_opt: Option<Config>,
     log_level_override: Option<Level>,

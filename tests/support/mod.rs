@@ -90,12 +90,14 @@ pub struct BufHandle {
 
 impl Write for BufHandle {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        let mut guard = self.buf.lock().map_err(|_| {
-            io::Error::other(
-                "warn-capture buffer poisoned (a prior test panicked while holding the lock)",
-            )
-        })?;
-        guard.extend_from_slice(data);
+        self.buf
+            .lock()
+            .map_err(|_| {
+                io::Error::other(
+                    "warn-capture buffer poisoned (a prior test panicked while holding the lock)",
+                )
+            })?
+            .extend_from_slice(data);
         Ok(data.len())
     }
 

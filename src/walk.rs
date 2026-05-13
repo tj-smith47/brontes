@@ -15,7 +15,7 @@ use crate::config::Config;
 /// Consumed by `generate_tools` to apply selectors and assemble the MCP tool
 /// list.
 #[derive(Debug)]
-pub(crate) struct ResolvedCmd<'a> {
+pub struct ResolvedCmd<'a> {
     /// The clap command this entry refers to.
     pub cmd: &'a Command,
     /// Space-joined path from the root command (e.g. `"my-cli mcp claude enable"`).
@@ -27,7 +27,7 @@ pub(crate) struct ResolvedCmd<'a> {
 ///
 /// Subcommands are visited in reverse registration order (the iterative DFS
 /// pushes them onto a stack and pops). Order is deterministic across runs.
-pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
+pub fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
     let mut out = Vec::new();
     let mut stack: Vec<(&Command, Vec<&str>)> = vec![(root, vec![root.get_name()])];
     while let Some((cmd, parts)) = stack.pop() {
@@ -44,7 +44,7 @@ pub(crate) fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
 
 /// Per the filter order: hidden → deprecated → group-only → segment-match.
 /// Returns `true` if `cmd` should be EXCLUDED from the tool list.
-pub(crate) fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
+pub fn should_filter(cmd: &Command, path: &str, cfg: &Config) -> bool {
     // 1. Hidden commands are never exposed as tools.
     if cmd.is_hide_set() {
         return true;

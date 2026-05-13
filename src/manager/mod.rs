@@ -30,10 +30,10 @@
 //! sorted order) so the on-disk bytes are stable across runs — important
 //! for the golden round-trip parity tests against ophis.
 
-pub(crate) mod claude;
-pub(crate) mod cursor;
-pub(crate) mod paths;
-pub(crate) mod vscode;
+pub mod claude;
+pub mod cursor;
+pub mod paths;
+pub mod vscode;
 
 use std::path::{Path, PathBuf};
 
@@ -56,7 +56,7 @@ use crate::{Error, Result};
 /// golden test asserts both `password: true` and `password: false` entries
 /// survive the load-mutate-write cycle.
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) struct Input {
+pub struct Input {
     /// The input kind tag (e.g. `"promptString"`). ophis Go field `Type`.
     #[serde(rename = "type")]
     pub(crate) kind: String,
@@ -84,9 +84,7 @@ pub(crate) struct Input {
 /// shape drift, so [`Manager::load`] on a missing file produces an empty
 /// config that subsequent `enable_server` calls can extend without
 /// surprising the editor at read-back time.
-pub(crate) trait EditorConfig:
-    serde::Serialize + serde::de::DeserializeOwned + Default + Clone
-{
+pub trait EditorConfig: serde::Serialize + serde::de::DeserializeOwned + Default + Clone {
     /// The per-editor server-entry type written under the server map.
     ///
     /// Claude's [`claude::ClaudeServer`] has `command`, optional `args`,
@@ -116,7 +114,7 @@ pub(crate) trait EditorConfig:
 /// Construct via [`Manager::load`]; missing files yield a default config
 /// rather than an error so the first `mcp <editor> enable` invocation on
 /// a fresh machine writes the initial config without ceremony.
-pub(crate) struct Manager<C: EditorConfig> {
+pub struct Manager<C: EditorConfig> {
     path: PathBuf,
     config: C,
 }
@@ -257,7 +255,7 @@ impl<C: EditorConfig> Manager<C> {
 /// Strips the final extension and appends `.backup.json`. Mirrors ophis
 /// `manager.go:178-180` `strings.TrimSuffix(m.configPath, ext) + ".backup.json"`.
 fn backup_path(primary: &Path) -> PathBuf {
-    let parent = primary.parent().unwrap_or(Path::new(""));
+    let parent = primary.parent().unwrap_or_else(|| Path::new(""));
     let stem = primary
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())

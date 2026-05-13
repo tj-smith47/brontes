@@ -17,12 +17,12 @@
 //! [`crate::handle`] disambiguate "the `mcp` subcommand brontes added" from
 //! "a `mcp` subcommand the user happened to register before mounting brontes".
 
-pub(crate) mod common;
-pub(crate) mod editor;
-pub(crate) mod signal;
-pub(crate) mod start;
-pub(crate) mod stream;
-pub(crate) mod tools;
+pub mod common;
+pub mod editor;
+pub mod signal;
+pub mod start;
+pub mod stream;
+pub mod tools;
 
 use clap::Command;
 
@@ -36,14 +36,14 @@ use clap::Command;
 //
 // This name is implementation detail and may change without notice; do not
 // pattern-match on it externally.
-pub(crate) const MARKER_NAME: &str = "__brontes_internal_marker";
+pub const MARKER_NAME: &str = "__brontes_internal_marker";
 
 /// Build the `mcp` subtree (group command + start/tools/stream children).
 ///
 /// `command_name` is the configured group name — defaults to `"mcp"`,
 /// overridden by [`crate::Config::command_name`]. The group itself has no
 /// runnable body; one of its children must be invoked.
-pub(crate) fn build(command_name: &str) -> Command {
+pub fn build(command_name: &str) -> Command {
     Command::new(command_name.to_string())
         .about("MCP server management")
         .long_about("Manage MCP servers for AI assistants and code editors")

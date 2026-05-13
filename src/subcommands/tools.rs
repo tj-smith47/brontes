@@ -20,7 +20,7 @@ use crate::config::Config;
 const OUTPUT_FILE: &str = "mcp-tools.json";
 
 /// Build the `mcp tools` clap subcommand.
-pub(crate) fn build() -> Command {
+pub fn build() -> Command {
     Command::new("tools")
         .about("Export tools as JSON")
         .long_about("Export available MCP tools to mcp-tools.json for inspection")
@@ -43,7 +43,7 @@ pub(crate) fn build() -> Command {
 /// - [`crate::Error::Config`] / [`crate::Error::Schema`] surfaced through
 ///   `generate_tools` for invalid configuration.
 /// - [`crate::Error::Io`] if the output file cannot be written.
-pub(crate) fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<()> {
+pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<()> {
     let cfg = cfg.unwrap_or_default();
     init_tracing(parse_log_level(matches).or(cfg.log_level));
 

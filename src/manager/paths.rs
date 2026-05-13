@@ -28,7 +28,7 @@ use std::path::PathBuf;
 /// unresolved branch (the chain is entirely env-driven per
 /// `claude_windows.go:9-19`).
 #[must_use]
-pub(crate) fn claude_config_path() -> PathBuf {
+pub fn claude_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir();
@@ -163,7 +163,7 @@ fn claude_config_path_windows_from(appdata: Option<&str>, userprofile: Option<&s
 /// `$USERPROFILE\.cursor\mcp.json` from a direct env read when home is
 /// unresolved.
 #[must_use]
-pub(crate) fn cursor_config_path() -> PathBuf {
+pub fn cursor_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir();
@@ -195,7 +195,7 @@ pub(crate) fn cursor_config_path() -> PathBuf {
 /// back to the relative `.cursor/mcp.json` when `std::env::current_dir()`
 /// fails (matches ophis behavior per PLAN line 582).
 #[must_use]
-pub(crate) fn cursor_workspace_path() -> PathBuf {
+pub fn cursor_workspace_path() -> PathBuf {
     cursor_workspace_path_from(std::env::current_dir().ok().as_deref())
 }
 
@@ -278,7 +278,7 @@ fn cursor_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
 /// `$USERPROFILE/AppData/Roaming/Code/User/mcp.json` from a direct env read
 /// when home is unresolved.
 #[must_use]
-pub(crate) fn vscode_config_path() -> PathBuf {
+pub fn vscode_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir();
@@ -310,7 +310,7 @@ pub(crate) fn vscode_config_path() -> PathBuf {
 /// back to the relative `.vscode/mcp.json` when `std::env::current_dir()`
 /// fails (matches ophis behavior per PLAN line 582).
 #[must_use]
-pub(crate) fn vscode_workspace_path() -> PathBuf {
+pub fn vscode_workspace_path() -> PathBuf {
     vscode_workspace_path_from(std::env::current_dir().ok().as_deref())
 }
 
@@ -415,7 +415,7 @@ fn vscode_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
 /// to derive the server name from the current executable when the user did
 /// not pass `--server-name`.
 #[must_use]
-pub(crate) fn derive_server_name(executable_path: &std::path::Path) -> String {
+pub fn derive_server_name(executable_path: &std::path::Path) -> String {
     let base = executable_path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())

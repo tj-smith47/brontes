@@ -24,7 +24,7 @@ use super::EditorConfig;
 /// The server map is a [`BTreeMap`] so on-disk key order is deterministic
 /// across runs — important for the golden round-trip tests against ophis.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct ClaudeConfig {
+pub struct ClaudeConfig {
     /// Configured MCP servers, keyed by server name. Insertion-and-removal
     /// driven by [`super::Manager`] via the [`EditorConfig`] trait.
     #[serde(rename = "mcpServers", default)]
@@ -41,7 +41,7 @@ pub(crate) struct ClaudeConfig {
 /// 2. `args` — optional argv tail (e.g. `["mcp", "start"]`); omitted when empty.
 /// 3. `env` — optional environment variables; omitted when empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct ClaudeServer {
+pub struct ClaudeServer {
     /// Absolute path to the executable Claude Desktop spawns.
     pub(crate) command: String,
     /// Argv tail. `None` (or empty `Some(vec![])`) collapses to no JSON key.

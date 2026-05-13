@@ -449,7 +449,7 @@ struct FaultyAcceptor {
 }
 
 impl FaultyAcceptor {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             calls: AtomicUsize::new(0),
         }

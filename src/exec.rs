@@ -51,7 +51,7 @@ use crate::{Error, Result};
 /// itself. When a stream crosses the cap, brontes emits one `warn` and
 /// continues reading (discarding the overflow) so the child does not block
 /// on a full pipe.
-pub(crate) const OUTPUT_CAP_BYTES: usize = 16 * 1024 * 1024;
+pub const OUTPUT_CAP_BYTES: usize = 16 * 1024 * 1024;
 
 /// Cached path to the current executable.
 ///
@@ -67,7 +67,7 @@ static EXECUTABLE_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Returns [`Error::Io`] if [`std::env::current_exe`] fails. The first
 /// successful resolution is cached; subsequent calls are infallible
 /// clones of the cached `PathBuf`.
-pub(crate) fn current_executable() -> Result<PathBuf> {
+pub fn current_executable() -> Result<PathBuf> {
     if let Some(p) = EXECUTABLE_PATH.get() {
         return Ok(p.clone());
     }
@@ -91,7 +91,7 @@ pub(crate) fn current_executable() -> Result<PathBuf> {
 /// path. Flags are appended next, then positional args.
 ///
 /// Mirrors ophis `buildCommandArgs` / `buildFlagArgs` (`execute.go:66-123`).
-pub(crate) fn build_command_args(tool_name: &str, input: &ToolInput) -> Vec<String> {
+pub fn build_command_args(tool_name: &str, input: &ToolInput) -> Vec<String> {
     // Drop the root token (the binary identifies itself; tool name encodes
     // root + subcommand path).
     let mut args: Vec<String> = tool_name.split('_').skip(1).map(str::to_string).collect();
@@ -192,7 +192,7 @@ fn render_scalar(v: &Value) -> String {
 /// - [`Error::Io`] if [`std::env::current_exe`] fails on the first call.
 /// - [`Error::Spawn`] if the subprocess cannot be started.
 /// - [`Error::Io`] if the child stream capture or wait fails.
-pub(crate) async fn run_tool(
+pub async fn run_tool(
     tool_name: &str,
     input: &ToolInput,
     env: &HashMap<String, String>,
@@ -339,18 +339,13 @@ async fn read_capped<R: AsyncRead + Unpin>(
 
 /// Test-only proxy for [`append_flag`]. Exposed via
 /// [`crate::__test_internal::render_flag_argv`].
-pub(crate) fn append_flag_for_test(
-    out: &mut Vec<String>,
-    name: &str,
-    value: &Value,
-    tool_name: &str,
-) {
+pub fn append_flag_for_test(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str) {
     append_flag(out, name, value, tool_name);
 }
 
 /// Test-only proxy for [`read_capped`]. Exposed via
 /// [`crate::__test_internal::drain_capped`].
-pub(crate) async fn read_capped_for_test<R: AsyncRead + Unpin>(
+pub async fn read_capped_for_test<R: AsyncRead + Unpin>(
     reader: R,
     stream_label: &'static str,
     tool_name: String,

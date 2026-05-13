@@ -46,12 +46,12 @@ impl SchemaType {
     #[must_use]
     pub const fn as_json_type(self) -> &'static str {
         match self {
-            SchemaType::Boolean => "boolean",
-            SchemaType::Integer => "integer",
-            SchemaType::Number => "number",
-            SchemaType::String | SchemaType::StringPath => "string",
-            SchemaType::Array => "array",
-            SchemaType::Object => "object",
+            Self::Boolean => "boolean",
+            Self::Integer => "integer",
+            Self::Number => "number",
+            Self::String | Self::StringPath => "string",
+            Self::Array => "array",
+            Self::Object => "object",
         }
     }
 }
@@ -66,7 +66,7 @@ impl SchemaType {
 /// - `bool` → [`SchemaType::Boolean`]
 /// - [`String`] → [`SchemaType::String`]
 /// - [`PathBuf`], [`OsString`] → [`SchemaType::StringPath`]
-pub(crate) fn known_type_classifications() -> &'static [(TypeId, SchemaType)] {
+pub fn known_type_classifications() -> &'static [(TypeId, SchemaType)] {
     static TABLE: OnceLock<Vec<(TypeId, SchemaType)>> = OnceLock::new();
     TABLE.get_or_init(|| {
         vec![

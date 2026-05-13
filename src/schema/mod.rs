@@ -14,9 +14,9 @@
 // `cache` is crate-internal — only the per-tool orchestrator consumes it.
 // `types` is public because consumers reference `SchemaType` via
 // `Config.flag_type_overrides`.
-pub(crate) mod args;
-pub(crate) mod cache;
-pub(crate) mod flag;
+pub mod args;
+pub mod cache;
+pub mod flag;
 pub mod types;
 
 pub use types::SchemaType;
@@ -43,7 +43,7 @@ use crate::selector::FlagMatcher;
 ///
 /// The returned `JsonObject` is wrapped in [`Arc`] for direct assignment to
 /// `rmcp::model::Tool::input_schema`.
-pub(crate) fn build_input_schema_with_matchers(
+pub fn build_input_schema_with_matchers(
     cmd: &Command,
     cfg: &Config,
     cmd_path: &str,
@@ -89,7 +89,7 @@ pub(crate) fn build_input_schema_with_matchers(
 /// The `ToolOutput` shape (`stdout` / `stderr` / `exit_code`) does not vary
 /// per command; this function shares the single cached [`Arc`] allocation
 /// across every tool (via `Arc::clone`), rather than allocating fresh.
-pub(crate) fn build_output_schema() -> Arc<JsonObject> {
+pub fn build_output_schema() -> Arc<JsonObject> {
     // Output shape is invariant per tool — share the single cached
     // Arc allocation across every Tool's output_schema field.
     Arc::clone(&cache::TOOL_OUTPUT_BASE_SCHEMA)
@@ -104,7 +104,7 @@ pub(crate) fn build_output_schema() -> Arc<JsonObject> {
 ///
 /// If `cmd.get_after_help()` is set and non-empty, a blank line followed by
 /// `"Examples:"` and the after-help text is appended to the description.
-pub(crate) fn build_description(cmd: &Command) -> String {
+pub fn build_description(cmd: &Command) -> String {
     let name = cmd.get_name();
     let main = cmd
         .get_long_about()

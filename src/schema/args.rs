@@ -24,7 +24,7 @@ use clap::Command;
 /// Positional command line arguments
 /// Usage pattern: <name> <path>
 /// ```
-pub(crate) fn args_description(cmd: &Command) -> String {
+pub fn args_description(cmd: &Command) -> String {
     let mut description = String::from("Positional command line arguments");
 
     // clap's render_usage produces a StyledStr like:

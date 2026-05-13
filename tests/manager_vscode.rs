@@ -336,16 +336,12 @@ fn enable_overwrites_existing_server() {
     .expect("second enable");
 
     let doc = read_json(&cfg_path);
-    let args: Vec<&str> = doc["servers"]["test-cli"]["args"]
+    let has_log_level = doc["servers"]["test-cli"]["args"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
-    assert!(
-        args.contains(&"--log-level"),
-        "second enable must have updated the args"
-    );
+        .any(|v| v.as_str().unwrap() == "--log-level");
+    assert!(has_log_level, "second enable must have updated the args");
 }
 
 #[test]

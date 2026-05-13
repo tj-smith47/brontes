@@ -35,7 +35,7 @@ use super::{EditorConfig, Input};
 /// [`BTreeMap`] so on-disk key order is deterministic across runs, which
 /// is what the golden round-trip parity tests against ophis require.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct CursorConfig {
+pub struct CursorConfig {
     /// Cursor / `VSCode` `inputs[]` prompt-string entries; preserved on
     /// round-trip but never constructed by brontes. Empty `Vec` collapses
     /// to no JSON key (`omitempty`).
@@ -62,7 +62,7 @@ pub(crate) struct CursorConfig {
 /// 5. `url` — optional server URL for non-stdio transports; omitted when absent.
 /// 6. `headers` — optional HTTP headers for non-stdio transports; omitted when empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct CursorServer {
+pub struct CursorServer {
     /// Transport type. brontes always writes `"stdio"`; `omitempty` on read
     /// so existing non-stdio entries (`"sse"`, `"http"`) survive round-trip.
     #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]

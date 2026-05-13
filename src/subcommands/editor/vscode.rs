@@ -53,7 +53,7 @@ fn arg_workspace() -> Arg {
 /// The group's `long_about` uses the FULL form `"Visual Studio Code"`,
 /// matching ophis `cmd/vscode/root.go` (PLAN line 714). The leaf
 /// `long_about` strings use the abbreviation `"VSCode"` (also PLAN line 714).
-pub(crate) fn build() -> Command {
+pub fn build() -> Command {
     Command::new("vscode")
         .about("Manage VSCode MCP servers")
         .long_about("Manage MCP server configuration for Visual Studio Code")
@@ -100,7 +100,7 @@ pub(crate) fn build() -> Command {
 /// - [`crate::Error::Io`] when [`std::env::current_exe`] fails.
 /// - [`crate::Error::EditorConfigRead`] / `Json` / `Backup` / `Write`
 ///   when the underlying [`Manager`] hits a filesystem error.
-pub(crate) fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
+pub fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
     match matches.subcommand() {
         Some(("enable", sub)) => run_enable(sub, cfg),
         Some(("disable", sub)) => run_disable(sub),

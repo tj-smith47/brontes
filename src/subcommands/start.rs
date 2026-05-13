@@ -10,7 +10,7 @@ use crate::Result;
 use crate::config::Config;
 
 /// Build the `mcp start` clap subcommand.
-pub(crate) fn build() -> Command {
+pub fn build() -> Command {
     Command::new("start")
         .about("Start the MCP server")
         .long_about("Start stdio server to expose CLI commands to AI assistants")
@@ -27,7 +27,7 @@ pub(crate) fn build() -> Command {
 /// `matches` is the `ArgMatches` for the `start` subcommand; `cli` is the
 /// full user CLI (cloned by the caller); `cfg` is the optional user
 /// configuration.
-pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
+pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
     let log_level = parse_log_level(matches);
     crate::server::stdio::serve_stdio(cli, cfg, log_level).await
 }
@@ -36,13 +36,13 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
 /// [`crate::__test_internal::parse_start_log_level`] so the warn-fire
 /// test crate can assert the §11 #9 unrecognized-`--log-level`
 /// `tracing::warn!` fires without driving the full `serve_stdio` runtime.
-pub(crate) fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
+pub fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
     parse_log_level(matches)
 }
 
 /// Test-only proxy for [`build`]. Exposed via
 /// [`crate::__test_internal::start_subcommand`].
-pub(crate) fn build_for_test() -> Command {
+pub fn build_for_test() -> Command {
     build()
 }
 

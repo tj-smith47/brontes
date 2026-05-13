@@ -24,7 +24,7 @@ use crate::selector::FlagMatcher;
 /// sourced from the first-match-wins selector that claimed this command.
 /// When `Some`, each arg is passed to the matcher before inclusion; `false`
 /// means the flag is omitted from the schema.  When `None` all flags pass.
-pub(crate) fn build_flags_schema(
+pub fn build_flags_schema(
     cmd: &Command,
     cfg: &Config,
     cmd_path: &str,

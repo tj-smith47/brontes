@@ -104,7 +104,7 @@ impl SignalSource for TokioUnixSignalSource {
 /// the trait (see the module docs), so this function inlines it for
 /// that target only.
 #[cfg(unix)]
-pub(crate) fn spawn_signal_listener(token: CancellationToken) {
+pub fn spawn_signal_listener(token: CancellationToken) {
     spawn_signal_listener_with(token, TokioUnixSignalSource);
 }
 

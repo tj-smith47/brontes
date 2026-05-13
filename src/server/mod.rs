@@ -12,8 +12,8 @@
 //! within the crate so the transport-specific subcommand modules
 //! ([`crate::server::stdio`], [`crate::server::http`]) can drive it.
 
-pub(crate) mod http;
-pub(crate) mod stdio;
+pub mod http;
+pub mod stdio;
 
 use std::collections::HashMap;
 use std::sync::Arc;

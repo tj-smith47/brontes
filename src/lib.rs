@@ -119,8 +119,9 @@ pub mod __test_internal {
     pub use hyper_util::rt::TokioIo;
 
     /// Drive the same flag-rendering logic that `mcp start` / `mcp stream`
-    /// use when translating a tool call's JSON `flags` map into argv. The
-    /// integration test crate uses this to assert that the §11 #7
+    /// use when translating a tool call's JSON `flags` map into argv.
+    ///
+    /// The integration test crate uses this to assert that the §11 #7
     /// nested-non-scalar `tracing::warn!` events fire as documented.
     #[must_use]
     pub fn render_flag_argv(
@@ -135,9 +136,10 @@ pub mod __test_internal {
 
     /// Drive the `OUTPUT_CAP_BYTES` capture path on an in-memory reader so
     /// the warn-fire test crate can assert the soft-cap `tracing::warn!`
-    /// fires exactly once per stream when output exceeds the cap. The
-    /// returned `Vec<u8>` is the retained bytes — the test does not need
-    /// it but receives it for symmetry with the production reader.
+    /// fires exactly once per stream when output exceeds the cap.
+    ///
+    /// The returned `Vec<u8>` is the retained bytes — the test does not
+    /// need it but receives it for symmetry with the production reader.
     pub async fn drain_capped<R>(
         reader: R,
         stream_label: &'static str,
@@ -154,9 +156,11 @@ pub mod __test_internal {
     pub const OUTPUT_CAP_BYTES: usize = crate::exec::OUTPUT_CAP_BYTES;
 
     /// Drive the `mcp start` `--log-level` parser on a prebuilt
-    /// `ArgMatches`. Returns `Some(level)` on a recognized value, `None`
-    /// on an unrecognized value (which also emits the §11 #9
-    /// `tracing::warn!` the warn-fire test crate asserts on).
+    /// `ArgMatches`.
+    ///
+    /// Returns `Some(level)` on a recognized value, `None` on an
+    /// unrecognized value (which also emits the §11 #9 `tracing::warn!`
+    /// the warn-fire test crate asserts on).
     #[must_use]
     pub fn parse_start_log_level(matches: &clap::ArgMatches) -> Option<tracing::Level> {
         crate::subcommands::start::parse_log_level_for_test(matches)

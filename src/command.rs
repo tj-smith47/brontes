@@ -58,7 +58,7 @@ use crate::selector::{FlagMatcher, Middleware};
 /// construction. Downstream consumers continue to use [`generate_tools`],
 /// which projects this struct down to a plain `Vec<Tool>` for offline
 /// inspection.
-pub(crate) struct ResolvedTool {
+pub struct ResolvedTool {
     /// The MCP tool descriptor handed back from `tools/list`.
     pub tool: Tool,
     /// Middleware from the selector that claimed this command, if any.
@@ -126,10 +126,7 @@ pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
 /// # Errors
 ///
 /// Same conditions as [`generate_tools`].
-pub(crate) fn generate_tools_with_middleware(
-    root: &Command,
-    cfg: &Config,
-) -> Result<Vec<ResolvedTool>> {
+pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Vec<ResolvedTool>> {
     // clap propagates `.global(true)` args lazily on `Command::build()`.
     // Clone-then-build ensures every walked command's `get_arguments()`
     // includes inherited globals, so path validation and schema building

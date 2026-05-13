@@ -45,7 +45,7 @@ use super::{EditorConfig, Input};
 /// matches the JSON key literally so no `#[serde(rename = ...)]` is needed.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[allow(clippy::upper_case_acronyms)]
-pub(crate) struct VSCodeConfig {
+pub struct VSCodeConfig {
     /// `VSCode` / Cursor `inputs[]` prompt-string entries; preserved on
     /// round-trip but never constructed by brontes. Empty `Vec` collapses
     /// to no JSON key (`omitempty`).
@@ -76,7 +76,7 @@ pub(crate) struct VSCodeConfig {
 /// 6. `headers` — optional HTTP headers for non-stdio transports; omitted when empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(clippy::upper_case_acronyms)]
-pub(crate) struct VSCodeServer {
+pub struct VSCodeServer {
     /// Transport type. brontes always writes `"stdio"`; `omitempty` on read
     /// so existing non-stdio entries (`"sse"`, `"http"`) survive round-trip.
     #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]

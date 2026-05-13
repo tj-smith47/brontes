@@ -22,7 +22,7 @@ use tracing::Level;
 /// `--log-level` parsing semantics. Each surface's `parse_log_level`
 /// wrapper exists to keep the call sites in their own module but
 /// delegates here without modification.
-pub(crate) fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
+pub fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
     let raw = matches.get_one::<String>("log-level")?;
     match raw.to_ascii_lowercase().as_str() {
         "trace" => Some(Level::TRACE),

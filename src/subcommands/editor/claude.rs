@@ -25,7 +25,7 @@ use super::{arg_config_path, arg_env, arg_log_level, arg_server_name, merge_env}
 /// Registered under the `mcp` group by [`crate::subcommands::build`]; the
 /// dispatcher in [`crate::command::handle`] routes the matched leaf into
 /// [`run`].
-pub(crate) fn build() -> Command {
+pub fn build() -> Command {
     Command::new("claude")
         .about("Manage Claude Desktop MCP servers")
         .long_about("Manage MCP server configuration for Claude Desktop")
@@ -66,7 +66,7 @@ pub(crate) fn build() -> Command {
 /// - [`crate::Error::Io`] when [`std::env::current_exe`] fails.
 /// - [`crate::Error::EditorConfigRead`] / `Parse` / `Backup` / `Write`
 ///   when the underlying [`Manager`] hits a filesystem error.
-pub(crate) fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
+pub fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
     match matches.subcommand() {
         Some(("enable", sub)) => run_enable(sub, cfg),
         Some(("disable", sub)) => run_disable(sub),

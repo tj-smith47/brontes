@@ -22,9 +22,9 @@
 //! own subcommand modules beside each other using the shared helpers below
 //! — see PLAN.md §3 module layout.
 
-pub(crate) mod claude;
-pub(crate) mod cursor;
-pub(crate) mod vscode;
+pub mod claude;
+pub mod cursor;
+pub mod vscode;
 
 use std::collections::BTreeMap;
 
@@ -36,7 +36,7 @@ use crate::Result;
 ///
 /// Shared across all three editors and across `enable` / `disable` /
 /// `list`. When unset, the editor resolves a per-OS default path.
-pub(crate) fn arg_config_path() -> Arg {
+pub fn arg_config_path() -> Arg {
     Arg::new("config-path")
         .long("config-path")
         .value_name("PATH")
@@ -48,7 +48,7 @@ pub(crate) fn arg_config_path() -> Arg {
 /// Shared across `enable` and `disable`. Default is
 /// [`crate::manager::paths::derive_server_name`] of
 /// [`std::env::current_exe`].
-pub(crate) fn arg_server_name() -> Arg {
+pub fn arg_server_name() -> Arg {
     Arg::new("server-name")
         .long("server-name")
         .value_name("NAME")
@@ -60,7 +60,7 @@ pub(crate) fn arg_server_name() -> Arg {
 /// Repeatable (`ArgAction::Append`). Short form `-e` matches ophis
 /// (`enable.go:39`). Parsing rejects values that do not contain `=` or
 /// start with `=` (empty key) — caught at [`merge_env`].
-pub(crate) fn arg_env() -> Arg {
+pub fn arg_env() -> Arg {
     Arg::new("env")
         .long("env")
         .short('e')
@@ -75,7 +75,7 @@ pub(crate) fn arg_env() -> Arg {
 /// inherits the level. Validation is intentionally permissive at parse
 /// time; unknown values warn at server start (matches `mcp start` /
 /// `mcp tools` behavior).
-pub(crate) fn arg_log_level() -> Arg {
+pub fn arg_log_level() -> Arg {
     Arg::new("log-level")
         .long("log-level")
         .value_name("LEVEL")
@@ -98,7 +98,7 @@ pub(crate) fn arg_log_level() -> Arg {
 ///
 /// Returns [`crate::Error::Config`] when any `--env` value is missing the
 /// `=` separator or has an empty key.
-pub(crate) fn merge_env(
+pub fn merge_env(
     default_env: &std::collections::HashMap<String, String>,
     user_pairs: &[String],
 ) -> Result<Option<BTreeMap<String, String>>> {

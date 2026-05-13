@@ -42,7 +42,7 @@ async fn pick_free_port() -> SocketAddr {
 }
 
 /// Build an MCP `initialize` JSON-RPC request body.
-fn initialize_body() -> &'static str {
+const fn initialize_body() -> &'static str {
     r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"brontes-test","version":"0.0.1"}}}"#
 }
 
@@ -53,7 +53,7 @@ fn tools_list_body(id: u64) -> String {
 
 /// Build a `notifications/initialized` JSON-RPC notification body
 /// (no id; the MCP spec requires this after the initialize response).
-fn initialized_notification() -> &'static str {
+const fn initialized_notification() -> &'static str {
     r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
 }
 

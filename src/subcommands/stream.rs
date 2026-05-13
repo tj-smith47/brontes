@@ -23,7 +23,7 @@ use crate::config::Config;
 /// Flag surface (`--host`, `--port`, `--log-level`) is stable per
 /// ophis-parity; the editor-config writer derives the JSON snippet for
 /// MCP clients from this surface.
-pub(crate) fn build() -> Command {
+pub fn build() -> Command {
     Command::new("stream")
         .about("Start the MCP server over streamable HTTP")
         .long_about(
@@ -77,7 +77,7 @@ pub(crate) fn build() -> Command {
 ///   `u16`; the host string parse is the remaining failure mode).
 /// - Any error surfaced by [`crate::server::http::serve_http`] (bind
 ///   failure, schema/config error from the pre-walk, transport panic).
-pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
+pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
     let cfg = cfg.unwrap_or_default();
     let log_level = parse_log_level(matches);
     init_tracing(log_level.or(cfg.log_level));
@@ -121,13 +121,13 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
 /// test crate can assert the §11 #9 unrecognized-`--log-level`
 /// `tracing::warn!` fires for the `mcp stream` surface independently
 /// of `mcp start`.
-pub(crate) fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
+pub fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
     parse_log_level(matches)
 }
 
 /// Test-only proxy for [`build`]. Exposed via
 /// [`crate::__test_internal::stream_subcommand`].
-pub(crate) fn build_for_test() -> Command {
+pub fn build_for_test() -> Command {
     build()
 }
 
