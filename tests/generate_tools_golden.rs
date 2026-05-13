@@ -197,5 +197,11 @@ fn generate_tools_golden() {
     let expected = std::fs::read_to_string(FIXTURE_PATH).expect("read golden fixture");
     // Fixture is written with exactly one trailing newline; trim both sides
     // so an editor that strips the newline on save does not flip the test.
-    pretty_assertions::assert_eq!(actual.trim(), expected.trim());
+    // Also normalize CRLF → LF so a Windows checkout under `autocrlf=true`
+    // does not flip the test (`.gitattributes` pins this repo-wide; this
+    // line is a defense-in-depth fallback if `.gitattributes` is missing
+    // or a fresh worktree slipped through before normalization).
+    let actual_norm = actual.replace("\r\n", "\n");
+    let expected_norm = expected.replace("\r\n", "\n");
+    pretty_assertions::assert_eq!(actual_norm.trim(), expected_norm.trim());
 }

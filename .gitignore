@@ -4,6 +4,7 @@
 # Project structure
 !*/
 !.gitignore
+!.gitattributes
 !.editorconfig
 !.github/
 !.github/**

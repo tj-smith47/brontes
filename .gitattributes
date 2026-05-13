@@ -1,0 +1,17 @@
+# Normalize line endings across all platforms so cross-OS CI runs
+# (Windows + Linux + macOS) compare text fixtures byte-for-byte.
+#
+# Without this, git on Windows defaults to `core.autocrlf=true`, which
+# rewrites `\n` → `\r\n` on checkout. JSON test fixtures (e.g.
+# `tests/fixtures/generate_tools_golden.json`) then load with CRLF on
+# Windows, breaking string-equality assertions against in-memory
+# serializer output that uses LF.
+
+* text=auto eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
