@@ -10,7 +10,7 @@ repository = "https://github.com/tj-smith47/brontes"
 homepage = "https://github.com/tj-smith47/brontes"
 documentation = "https://docs.rs/brontes"
 readme = "README.md"
-keywords = ["cli", "clap", "mcp", "model-context-protocol", "ai"]
+keywords = ["cli", "clap", "mcp", "ai", "server"]
 categories = ["command-line-interface", "development-tools"]
 # Keep the published .crate tarball lean: developer-only configuration,
 # release scaffolding, and CI workflows do not belong in consumer crates.
