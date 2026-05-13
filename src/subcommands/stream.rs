@@ -89,15 +89,7 @@ pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Res
         .map(|vals| vals.cloned().collect())
         .unwrap_or_default();
 
-    // Empty host → bind-all. clap's `default_value("")` leaves the
-    // raw string empty when the user doesn't pass `--host`; Go's
-    // `net.Listen("tcp", ":8080")` accepts a missing host but Rust's
-    // `SocketAddr` parser does not, so translate explicitly.
-    let host = if raw_host.is_empty() {
-        "0.0.0.0"
-    } else {
-        raw_host
-    };
+    let host = resolve_bind_host(raw_host);
     let addr: SocketAddr = format!("{host}:{port}").parse().map_err(|e| {
         crate::Error::Config(format!(
             "invalid --host/--port combination {host:?}:{port}: {e}"
@@ -114,6 +106,17 @@ pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Res
     tracing::info!("MCP server listening on address \"{addr}\"");
 
     crate::server::http::serve_http(cli, cfg, addr, cancel, extra_allowed_hosts).await
+}
+
+/// Translate the user-supplied `--host` to the literal address `serve_http`
+/// binds. Empty string → bind-all (`"0.0.0.0"`); anything else passes through
+/// unchanged.
+///
+/// Matches ophis `mcp stream`'s `net.Listen("tcp", ":port")` semantics:
+/// Go's listener accepts a missing host but Rust's [`SocketAddr`] parser
+/// does not, so the bind-all translation is explicit on the Rust side.
+pub(crate) fn resolve_bind_host(raw: &str) -> &str {
+    if raw.is_empty() { "0.0.0.0" } else { raw }
 }
 
 /// Test-only proxy for [`parse_log_level`]. Exposed via
@@ -194,29 +197,24 @@ mod tests {
 
     #[test]
     fn empty_host_translates_to_bind_all() {
-        // Mirror the empty-host-to-0.0.0.0 translation that lives inline
-        // in `run`: this guards the Go-parity behavior against regression
-        // without standing up a full server.
-        let raw_host = "";
-        let host = if raw_host.is_empty() {
-            "0.0.0.0"
-        } else {
-            raw_host
-        };
-        let addr: SocketAddr = format!("{host}:{}", 8080_u16).parse().expect("parse");
+        // Exercises the SUT directly — `resolve_bind_host` is the production
+        // helper invoked by `run`. If the translation regresses (e.g. someone
+        // changes the sentinel to "::" or removes the empty-string branch),
+        // this assertion fires.
+        assert_eq!(resolve_bind_host(""), "0.0.0.0");
+        let addr: SocketAddr = format!("{}:{}", resolve_bind_host(""), 8080_u16)
+            .parse()
+            .expect("parse");
         assert_eq!(addr.port(), 8080);
         assert!(addr.ip().is_unspecified(), "0.0.0.0 must be unspecified");
     }
 
     #[test]
     fn non_empty_host_passes_through() {
-        let raw_host = "127.0.0.1";
-        let host = if raw_host.is_empty() {
-            "0.0.0.0"
-        } else {
-            raw_host
-        };
-        let addr: SocketAddr = format!("{host}:{}", 8081_u16).parse().expect("parse");
+        assert_eq!(resolve_bind_host("127.0.0.1"), "127.0.0.1");
+        let addr: SocketAddr = format!("{}:{}", resolve_bind_host("127.0.0.1"), 8081_u16)
+            .parse()
+            .expect("parse");
         assert_eq!(addr.port(), 8081);
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
     }

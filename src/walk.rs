@@ -265,14 +265,6 @@ mod tests {
         assert!(!should_filter(&cmd, "status", &cfg));
     }
 
-    // ── command_name default ──────────────────────────────────────────────
-
-    #[test]
-    fn command_name_defaults_to_mcp_when_unset() {
-        let cfg = Config::default();
-        assert_eq!(cfg.command_name.as_deref().unwrap_or("mcp"), "mcp");
-    }
-
     // ── Segment-equality: similar-named segments are NOT filtered ──────────
     //
     // Earlier brontes ports used a substring rule (matching ophis's

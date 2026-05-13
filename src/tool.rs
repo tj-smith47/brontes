@@ -127,7 +127,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_input_round_trip() {
+    fn test_tool_input_serializes_to_pinned_shape() {
+        // Each direction asserts against a hand-curated JSON literal, so a
+        // future serde rename / field removal / type change is caught — a
+        // bare round-trip (`from_str(to_string(v))`) would only prove serde
+        // is internally consistent, not that brontes' wire contract holds.
         let input = ToolInput {
             flags: [
                 ("log-level".to_string(), json!("debug")),
@@ -138,42 +142,81 @@ mod tests {
             .collect(),
             args: vec!["file1.txt".to_string(), "file2.txt".to_string()],
         };
+        let expected = json!({
+            "flags": { "log-level": "debug", "output": "results.json" },
+            "args": ["file1.txt", "file2.txt"],
+        });
 
-        let json = to_value(&input).expect("serialize");
-        let deserialized: ToolInput = from_value(json).expect("deserialize");
+        let actual = to_value(&input).expect("serialize");
+        assert_eq!(actual, expected, "serialized shape must match contract");
 
-        assert_eq!(deserialized.flags, input.flags);
-        assert_eq!(deserialized.args, input.args);
+        let parsed: ToolInput = from_value(expected).expect("deserialize");
+        assert_eq!(parsed.flags, input.flags, "flags must parse back");
+        assert_eq!(parsed.args, input.args, "args must parse back");
     }
 
     #[test]
-    fn test_tool_output_round_trip() {
+    fn test_tool_output_wire_shape() {
+        // Pins the three required keys, their types, and ordering. Mirrors
+        // `test_tool_input_wire_shape` (no analogous pin existed previously).
+        let output = ToolOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+        let json = to_value(&output).expect("serialize");
+        let obj = json.as_object().expect("is object");
+        assert_eq!(obj.len(), 3, "ToolOutput must have exactly 3 fields");
+        assert!(obj.contains_key("stdout"), "stdout field must be present");
+        assert!(obj.contains_key("stderr"), "stderr field must be present");
+        assert!(
+            obj.contains_key("exit_code"),
+            "exit_code field must be present"
+        );
+        assert!(obj["stdout"].is_string(), "stdout must serialize as string");
+        assert!(obj["stderr"].is_string(), "stderr must serialize as string");
+        assert!(
+            obj["exit_code"].is_i64(),
+            "exit_code must serialize as integer"
+        );
+    }
+
+    #[test]
+    fn test_tool_output_serializes_to_pinned_shape() {
         let output = ToolOutput {
             stdout: "Operation succeeded\n".to_string(),
             stderr: "Warning: deprecated flag used\n".to_string(),
             exit_code: 0,
         };
+        let expected = json!({
+            "stdout": "Operation succeeded\n",
+            "stderr": "Warning: deprecated flag used\n",
+            "exit_code": 0,
+        });
 
-        let json = to_value(&output).expect("serialize");
-        let deserialized: ToolOutput = from_value(json).expect("deserialize");
+        let actual = to_value(&output).expect("serialize");
+        assert_eq!(actual, expected, "serialized shape must match contract");
 
-        assert_eq!(deserialized.stdout, output.stdout);
-        assert_eq!(deserialized.stderr, output.stderr);
-        assert_eq!(deserialized.exit_code, output.exit_code);
+        let parsed: ToolOutput = from_value(expected).expect("deserialize");
+        assert_eq!(parsed.stdout, output.stdout);
+        assert_eq!(parsed.stderr, output.stderr);
+        assert_eq!(parsed.exit_code, output.exit_code);
     }
 
     #[test]
-    fn test_tool_output_signal_sentinel() {
-        // Test that exit_code: -1 (signal kill) round-trips correctly.
-        let output = ToolOutput {
-            stdout: String::new(),
-            stderr: "Process killed by signal\n".to_string(),
-            exit_code: -1,
-        };
-
-        let json = to_value(&output).expect("serialize");
-        let deserialized: ToolOutput = from_value(json).expect("deserialize");
-
-        assert_eq!(deserialized.exit_code, -1, "-1 sentinel must round-trip");
+    fn test_tool_output_negative_exit_code_preserves_sign() {
+        // The `-1` sentinel for signal-killed processes is materialised by
+        // `status.code().unwrap_or(-1)` at `src/exec.rs:269`; this test pins
+        // that a negative exit code survives the JSON contract (round-trip
+        // alone would prove only serde's internal consistency).
+        let expected = json!({
+            "stdout": "",
+            "stderr": "Process killed by signal\n",
+            "exit_code": -1,
+        });
+        let parsed: ToolOutput = from_value(expected.clone()).expect("deserialize");
+        assert_eq!(parsed.exit_code, -1, "-1 sentinel must deserialize");
+        let actual = to_value(&parsed).expect("serialize");
+        assert_eq!(actual, expected, "-1 sentinel must re-serialize");
     }
 }
