@@ -119,24 +119,71 @@ defaults:
     cargo:
       index_timeout: 600
 
-# MCP registry publisher — present but skipped for v0.1.0.
+# ───────────────────────────────────────────────────────────────────────
+# EXAMPLE — `mcp:` block for a brontes-powered MCP server release
+# ───────────────────────────────────────────────────────────────────────
 #
-# Brontes is a library, not a runnable MCP server. Consumers
-# (anodizer, cfgd) register their brontes-powered servers on the
-# registry instead. Flip `skip` to false (or remove this block) once a
-# runnable example binary ships and is the right thing to register.
-mcp:
-  name: io.github.tj-smith47/brontes
-  description: "Transform any clap CLI into an MCP server"
-  homepage: "https://github.com/tj-smith47/brontes"
-  skip: true
-  repository:
-    url: "https://github.com/tj-smith47/brontes"
-    source: github
-  packages:
-    - registry_type: mcpb
-      identifier: "brontes@{{ .Version }}"
-      transport:
-        type: stdio
-  auth:
-    type: github-oidc
+# Brontes itself is a library, not a runnable MCP server, so it does not
+# register on the MCP registry. The block below is commented out for that
+# reason — but is left in place as a worked example for downstream
+# consumers (anodizer, cfgd, any clap CLI that mounts `brontes::command`)
+# who DO publish a runnable server and want anodizer to register it.
+#
+# Uncomment, replace `your-mcp-server-name` with your reverse-DNS name,
+# and edit the `packages[]` block to match how your server ships. The
+# README points consumers at this block via the "Releasing an MCP server"
+# section.
+#
+# Schema reference: anodizer's `crates/core/src/config/mcp.rs` (McpConfig).
+# Docs: https://tj-smith47.github.io/anodizer/docs/publish/mcp-registry/
+#
+# mcp:
+#   # Reverse-DNS name, exactly one `/` between namespace and server name.
+#   # Required for the registry to accept the publish. Convention:
+#   # `io.github.<your-gh-handle>/<server-name>`.
+#   name: io.github.your-gh-handle/your-mcp-server-name
+#
+#   # Human-readable description (max 100 chars). Tera-templated.
+#   description: "Short blurb shown in the MCP registry UI"
+#
+#   # Optional URL to the project homepage / docs site.
+#   homepage: "https://github.com/your-gh-handle/your-mcp-server-name"
+#
+#   # Set to `true` to register the metadata block without publishing
+#   # (useful for snapshot / dry-run releases). Tera-templated; the
+#   # `disable:` alias is accepted for back-compat with GoReleaser configs.
+#   # skip: "{{ .IsSnapshot }}"
+#
+#   # Repository the server's source lives in. `source: github` is the
+#   # standard value; alternate values track the registry's `repository`
+#   # taxonomy.
+#   repository:
+#     url: "https://github.com/your-gh-handle/your-mcp-server-name"
+#     source: github
+#
+#   # One entry per package registry the server is available on. Pick the
+#   # `registry_type` that matches how you actually ship:
+#   #   - `mcpb`   — MCP Bundle (zip with manifest), uploaded as a GH
+#   #                release asset; transport is whatever the bundle ships
+#   #   - `oci`    — Docker / OCI image (requires the `dockers:` block
+#   #                upstream so the image actually exists before publish)
+#   #   - `npm`, `pypi`, `nuget` — language registries; identifier is the
+#   #                published package name
+#   # `identifier` is Tera-templated; `{{ .Version }}` is the release tag
+#   # without the `v` prefix.
+#   packages:
+#     - registry_type: mcpb
+#       identifier: "your-mcp-server-name@{{ .Version }}"
+#       transport:
+#         type: stdio        # or `streamable-http` for HTTP transport
+#
+#   # How anodizer authenticates to the MCP registry on publish. Pick one:
+#   #   - `github-oidc` — GHA-native; requires `permissions: id-token: write`
+#   #                     in the release workflow. No PAT needed.
+#   #   - `github`      — exchanges a Personal Access Token (PAT) for a
+#   #                     registry session; requires `GH_PAT` secret.
+#   #   - `none`        — unauthenticated; only valid for registries that
+#   #                     accept anonymous publish (rare; usually for
+#   #                     internal/self-hosted registries).
+#   auth:
+#     type: github-oidc

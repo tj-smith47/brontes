@@ -115,6 +115,19 @@ fn build() -> brontes::Result<Vec<rmcp::model::Tool>> {
 
 [`generate_tools`]: https://docs.rs/brontes/latest/brontes/fn.generate_tools.html
 
+## Releasing an MCP server built with brontes
+
+If you are shipping a CLI that mounts `brontes::command` and want the
+resulting MCP server to land on the public
+[MCP registry](https://registry.modelcontextprotocol.io/), brontes' own
+[`.anodizer.yaml`](.anodizer.yaml) carries an annotated `mcp:` block
+showing every field — registry name, package shape, transport,
+auth method — that
+[anodizer](https://github.com/tj-smith47/anodizer) needs to publish your
+release end-to-end. The block is commented out in this repo because
+brontes itself is a library, not a runnable server; copy it into your
+own consumer's `.anodizer.yaml`, uncomment, and fill in your values.
+
 ## Repository
 
 https://github.com/tj-smith47/brontes
