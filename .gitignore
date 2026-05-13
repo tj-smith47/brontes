@@ -56,3 +56,4 @@ mcp-tools.json
 !.claude/
 !.claude/scripts/
 !.claude/scripts/update-coverage-badge.sh
+!.claude/settings.json
