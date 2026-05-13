@@ -103,8 +103,6 @@ source:
   files:
     - "src/**/*.rs"
     - "tests/**/*.rs"
-    - "examples/**/*.rs"
-    - "examples/**/Cargo.toml"
     - "Cargo.toml"
     - "Cargo.lock"
     - "LICENSE"
@@ -118,6 +116,29 @@ defaults:
   publish:
     cargo:
       index_timeout: 600
+
+# Single-crate library. `release.github.owner/name` is required by the
+# `changelog: use=github-native` stage so anodizer's auto-release-notes
+# API call knows which repository to query for the commit range.
+crates:
+  - name: brontes
+    path: .
+    tag_template: "v{{ Version }}"
+    release:
+      github:
+        owner: tj-smith47
+        name: brontes
+      draft: false
+      prerelease: auto
+      make_latest: auto
+      mode: keep-existing
+      target_commitish: "{{ .Commit }}"
+      name_template: "{{ ProjectName }} {{ Tag }}"
+      header: |
+        ## What's new in {{ .Tag }}
+      footer: |
+        ---
+        Released with [anodizer](https://github.com/tj-smith47/anodizer) 🦀
 
 # ───────────────────────────────────────────────────────────────────────
 # EXAMPLE — `mcp:` block for a brontes-powered MCP server release

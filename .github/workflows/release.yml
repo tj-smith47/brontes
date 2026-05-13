@@ -34,11 +34,6 @@ jobs:
       # Brontes is library-only — no binary builds, no per-OS matrix, no
       # archives/signs/docker. The full release pipeline (changelog → source
       # tarball → GH release → cargo publish) runs in one job.
-      #
-      # `from-source: true` compiles anodizer at release time so brontes does
-      # not have to maintain a cross-platform CI workflow that pre-builds the
-      # anodizer artifact (cf. anodizer's own release.yml which pulls from
-      # `from-artifact: anodizer-linux`).
       - name: Run anodizer release
         uses: tj-smith47/anodizer-action@v1
         with:
