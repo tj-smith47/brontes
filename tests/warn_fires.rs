@@ -34,11 +34,12 @@
 //!
 //! Uncovered (surfaced as SUGGESTs in the implementer report, not in CI):
 //!
-//! - `src/server/{stdio,http}.rs` signal-handler install failures —
-//!   `tokio::signal::unix::signal(..)` does not fail under normal test
-//!   conditions; testing requires either injecting a faulty signal
-//!   source (production refactor) or running under a constrained
-//!   process namespace. Out of scope for this task.
+//! - `src/subcommands/signal.rs::spawn_signal_listener_with` SIGINT-
+//!   register failure (faulty `SignalSource`) →
+//!   [`signal_sigint_register_failure_emits_warn`]
+//! - `src/subcommands/signal.rs::spawn_signal_listener_with` SIGTERM-
+//!   register failure (faulty `SignalSource`) →
+//!   [`signal_sigterm_register_failure_emits_warn`]
 
 mod support;
 
@@ -609,4 +610,122 @@ fn http_grace_window_exceeded_emits_warn() {
             "50ms",
         ],
     );
+}
+
+// ---------------------------------------------------------------------------
+// Signal-listener — SIGINT / SIGTERM register-failure warns
+//
+// `cfg(unix)` matches the production gate on
+// `src/subcommands/signal.rs::spawn_signal_listener_with`. Each test
+// injects a faulty `SignalSource` so the documented `tracing::warn!`
+// fires deterministically without the host process actually being out
+// of signal-handler resources.
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+mod signal_warns {
+    use std::future::pending;
+    use std::io;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::{assert_contains_all, capture_warns_async};
+    use brontes::__test_internal::{SignalSource, spawn_signal_listener_with};
+
+    /// `SignalSource` whose `register_sigint` always returns an
+    /// `io::Error`. Drives the
+    /// `"could not install SIGINT handler"` warn path.
+    struct SigintFails;
+
+    impl SignalSource for SigintFails {
+        type Signal = ();
+
+        fn register_sigint(&self) -> io::Result<Self::Signal> {
+            Err(io::Error::other("synthetic SIGINT registration failure"))
+        }
+
+        fn register_sigterm(&self) -> io::Result<Self::Signal> {
+            // Unreachable in the warn-fire path — SIGINT fails first
+            // and the listener returns before touching SIGTERM. Returns
+            // `Ok(())` for completeness so the trait contract holds.
+            Ok(())
+        }
+
+        async fn next_signal(_sig: &mut Self::Signal) -> Option<()> {
+            pending().await
+        }
+    }
+
+    /// `SignalSource` whose `register_sigint` succeeds but
+    /// `register_sigterm` returns an `io::Error`. Drives the
+    /// `"could not install SIGTERM handler"` warn path.
+    struct SigtermFails;
+
+    impl SignalSource for SigtermFails {
+        type Signal = ();
+
+        fn register_sigint(&self) -> io::Result<Self::Signal> {
+            Ok(())
+        }
+
+        fn register_sigterm(&self) -> io::Result<Self::Signal> {
+            Err(io::Error::other("synthetic SIGTERM registration failure"))
+        }
+
+        async fn next_signal(_sig: &mut Self::Signal) -> Option<()> {
+            pending().await
+        }
+    }
+
+    #[test]
+    fn signal_sigint_register_failure_emits_warn() {
+        let captured = futures::executor::block_on(async {
+            let ((), log) = capture_warns_async(async {
+                let token = CancellationToken::new();
+                spawn_signal_listener_with(token, SigintFails);
+                // Yield repeatedly to let the spawned task run its
+                // register_sigint path and emit the warn before the
+                // subscriber scope drops.
+                for _ in 0..32 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+            log
+        });
+
+        assert_contains_all(
+            &captured,
+            &[
+                "WARN",
+                "could not install SIGINT handler",
+                // Production renders the synthetic message via `error = %e`.
+                "synthetic SIGINT registration failure",
+            ],
+        );
+    }
+
+    #[test]
+    fn signal_sigterm_register_failure_emits_warn() {
+        let captured = futures::executor::block_on(async {
+            let ((), log) = capture_warns_async(async {
+                let token = CancellationToken::new();
+                spawn_signal_listener_with(token, SigtermFails);
+                for _ in 0..32 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+            log
+        });
+
+        assert_contains_all(
+            &captured,
+            &[
+                "WARN",
+                "could not install SIGTERM handler",
+                "synthetic SIGTERM registration failure",
+            ],
+        );
+    }
 }

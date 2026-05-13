@@ -48,7 +48,7 @@ pub(crate) async fn serve_stdio(
     init_tracing(log_level_override.or(cfg.log_level));
 
     let cancel = CancellationToken::new();
-    spawn_signal_listener(cancel.clone());
+    crate::subcommands::signal::spawn_signal_listener(cancel.clone());
 
     // `BrontesServer::new` walks the tree and caches the tool list at
     // construction; a bad config surfaces as a startup failure here rather
@@ -84,46 +84,4 @@ fn init_tracing(level: Option<Level>) {
         .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .try_init();
-}
-
-/// Spawn a task that cancels `token` on SIGINT/SIGTERM (Unix) or Ctrl+C
-/// (Windows). The task is detached; cancellation propagates through the
-/// rmcp service's drop guard whether the task or the main service exits
-/// first.
-#[cfg(unix)]
-fn spawn_signal_listener(token: CancellationToken) {
-    tokio::spawn(async move {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut sigint = match signal(SignalKind::interrupt()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "could not install SIGINT handler");
-                return;
-            }
-        };
-        let mut sigterm = match signal(SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "could not install SIGTERM handler");
-                return;
-            }
-        };
-        tokio::select! {
-            _ = sigint.recv() => tracing::info!("received SIGINT; cancelling MCP server"),
-            _ = sigterm.recv() => tracing::info!("received SIGTERM; cancelling MCP server"),
-        }
-        token.cancel();
-    });
-}
-
-#[cfg(not(unix))]
-fn spawn_signal_listener(token: CancellationToken) {
-    tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            tracing::warn!(error = %e, "could not install Ctrl+C handler");
-            return;
-        }
-        tracing::info!("received Ctrl+C; cancelling MCP server");
-        token.cancel();
-    });
 }

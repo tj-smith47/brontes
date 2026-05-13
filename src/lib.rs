@@ -101,6 +101,18 @@ pub mod __test_internal {
     pub use crate::server::http::{
         Acceptor, SHUTDOWN_GRACE, TokioTcpAcceptor, bind_default_acceptor, serve_http_with,
     };
+    /// Re-exported signal-listener internals so the warn-fire test crate
+    /// can drive `spawn_signal_listener_with` against a faulty
+    /// [`SignalSource`] and assert the two `tracing::warn!` install
+    /// failure paths (`could not install SIGINT handler` /
+    /// `could not install SIGTERM handler`) fire as documented. Mirrors
+    /// the pattern Task #20 established for `Acceptor`.
+    ///
+    /// [`SignalSource`]: crate::subcommands::signal::SignalSource
+    #[cfg(unix)]
+    pub use crate::subcommands::signal::{
+        SignalSource, TokioUnixSignalSource, spawn_signal_listener_with,
+    };
     /// Re-exported [`hyper_util::rt::TokioIo`] so the warn-fire test crate
     /// can satisfy the [`Acceptor::accept`] return type without taking
     /// `hyper-util` as a dev-dependency (it is already a main dep).

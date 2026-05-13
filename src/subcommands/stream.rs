@@ -105,7 +105,7 @@ pub(crate) async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>)
     })?;
 
     let cancel = CancellationToken::new();
-    spawn_signal_listener(cancel.clone());
+    super::signal::spawn_signal_listener(cancel.clone());
 
     // Startup log line matches ophis `config.go:124`:
     // `fmt.Sprintf("MCP server listening on address %q", addr)`. The
@@ -151,47 +151,6 @@ fn init_tracing(level: Option<Level>) {
         .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .try_init();
-}
-
-/// Spawn a task that cancels `token` on SIGINT/SIGTERM (Unix) or Ctrl+C
-/// (Windows). The task is detached; cancellation propagates through the
-/// HTTP server's accept-loop select branch.
-#[cfg(unix)]
-fn spawn_signal_listener(token: CancellationToken) {
-    tokio::spawn(async move {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut sigint = match signal(SignalKind::interrupt()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "could not install SIGINT handler");
-                return;
-            }
-        };
-        let mut sigterm = match signal(SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "could not install SIGTERM handler");
-                return;
-            }
-        };
-        tokio::select! {
-            _ = sigint.recv() => tracing::info!("received SIGINT; cancelling MCP server"),
-            _ = sigterm.recv() => tracing::info!("received SIGTERM; cancelling MCP server"),
-        }
-        token.cancel();
-    });
-}
-
-#[cfg(not(unix))]
-fn spawn_signal_listener(token: CancellationToken) {
-    tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            tracing::warn!(error = %e, "could not install Ctrl+C handler");
-            return;
-        }
-        tracing::info!("received Ctrl+C; cancelling MCP server");
-        token.cancel();
-    });
 }
 
 #[cfg(test)]
