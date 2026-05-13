@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write       # GH release creation
+  id-token: write       # github-oidc for MCP registry (when un-skipped)
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tag history + previous-tag lookup for changelog
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      # Brontes is library-only — no binary builds, no per-OS matrix, no
+      # archives/signs/docker. The full release pipeline (changelog → source
+      # tarball → GH release → cargo publish) runs in one job.
+      #
+      # `from-source: true` compiles anodizer at release time so brontes does
+      # not have to maintain a cross-platform CI workflow that pre-builds the
+      # anodizer artifact (cf. anodizer's own release.yml which pulls from
+      # `from-artifact: anodizer-linux`).
+      - name: Run anodizer release
+        uses: tj-smith47/anodizer-action@v1
+        with:
+          from-source: true
+          install-rust: false
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
