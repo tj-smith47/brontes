@@ -350,20 +350,30 @@ See [SECURITY.md](SECURITY.md) for the full HTTP-transport threat model.
 
 ## Releasing an MCP server built with brontes
 
-If you are shipping a CLI that mounts `brontes::command` and want the
-resulting MCP server to land on the public
-[MCP registry](https://registry.modelcontextprotocol.io/), brontes' own
-[`.anodizer.yaml`](.anodizer.yaml) carries an annotated `mcp:` block
-showing every field — registry name, package shape, transport,
-auth method — that
-[anodizer](https://github.com/tj-smith47/anodizer) needs to publish your
-release end-to-end. The block is commented out in this repo because
-brontes itself is a library, not a runnable server; copy it into your
-own consumer's `.anodizer.yaml`, uncomment, and fill in your values.
+[**anodizer**](https://github.com/tj-smith47/anodizer) is the
+recommended release tool for brontes-powered CLIs. It is a single
+Rust binary that ships your MCP server end-to-end in one
+`anodizer release` invocation:
 
-## Repository
+- **Multi-platform binaries** — cross-compiled archives for every
+  Tier-1 target (Linux / macOS / Windows × x86_64 / aarch64).
+- **Crates.io publish** — `cargo publish` with deterministic builds
+  and immutable-version safety rails.
+- **GitHub Releases** — auto-generated changelog (Conventional
+  Commits), uploaded archives, checksums, and signatures.
+- **MCP registry** — direct publish to
+  [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/)
+  via the `mcp:` block (server name, package shape, transport, auth).
+- **Cosign signatures** — keyless OIDC-signed artifacts.
+- **Auto-tagging** — Conventional Commits drive the semver bump;
+  CI mints the tag, no manual `git tag` step.
 
-https://github.com/tj-smith47/brontes
+brontes' own [`.anodizer.yaml`](.anodizer.yaml) is the worked
+reference: it carries an annotated `mcp:` block showing every
+registry-publish field, commented out because brontes itself is a
+library. Copy the block into your own consumer's `.anodizer.yaml`,
+uncomment, and fill in your values — that is the full release
+pipeline.
 
 ## Contributing
 
