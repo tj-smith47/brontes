@@ -76,7 +76,7 @@ mod tool;
 mod walk;
 
 pub use annotations::ToolAnnotations;
-pub use command::{command, generate_tools, handle, run};
+pub use command::{command, generate_tools, handle, run, run_from};
 pub use config::{Config, DescriptionMode};
 pub use error::{Error, Result};
 pub use schema::SchemaType;
@@ -187,5 +187,70 @@ pub mod __test_internal {
     #[must_use]
     pub fn stream_subcommand() -> clap::Command {
         crate::subcommands::stream::build_for_test()
+    }
+
+    /// Drive `crate::subcommands::stream::run_with_cancel` with a
+    /// caller-supplied cancellation token.
+    ///
+    /// Production code uses `stream::run`, which spawns its own signal
+    /// listener and mints a fresh token; the integration test crate
+    /// passes a pre-cancelled token so `serve_http` returns immediately
+    /// after bind, without firing real SIGINT at the test process.
+    /// Covers the argv-parsing + `SocketAddr` build + serve-http call
+    /// path that `run` shares with production.
+    pub async fn stream_run_with_cancel(
+        matches: &clap::ArgMatches,
+        cli: clap::Command,
+        cfg: Option<crate::Config>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()> {
+        crate::subcommands::stream::run_with_cancel(matches, cli, cfg, cancel).await
+    }
+
+    /// Drive `crate::server::stdio::serve_stdio_with` with a caller-
+    /// supplied transport pair and cancellation token.
+    ///
+    /// Production code uses `serve_stdio`, which always uses the real
+    /// process stdio + signal-driven cancel; the integration test crate
+    /// passes an in-memory [`tokio::io::duplex`] pair so the smoke test
+    /// can drive a real MCP client peer against the server without
+    /// touching the process's stdin/stdout.
+    pub async fn serve_stdio_with<R, W>(
+        cli: clap::Command,
+        cfg: crate::Config,
+        transport: (R, W),
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()>
+    where
+        R: tokio::io::AsyncRead + Send + Unpin + 'static,
+        W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+    {
+        crate::server::stdio::serve_stdio_with(cli, cfg, transport, cancel).await
+    }
+
+    /// Dispatch a synthesized `<editor>` subcommand match through the
+    /// production editor `run()` entry.
+    ///
+    /// Used by the editor-error-paths integration tests to exercise the
+    /// `unknown leaf` / `missing leaf` Err arms in each editor's `run()`
+    /// (claude / cursor / vscode / zed) without needing each test to
+    /// import the editor's private `run`.
+    ///
+    /// `editor` is one of `"claude"`, `"cursor"`, `"vscode"`, `"zed"`.
+    /// An unrecognized editor name returns [`crate::Error::Config`].
+    pub fn editor_run(
+        editor: &str,
+        matches: &clap::ArgMatches,
+        _cli: &clap::Command,
+    ) -> crate::Result<()> {
+        match editor {
+            "claude" => crate::subcommands::editor::claude::run(matches, None),
+            "cursor" => crate::subcommands::editor::cursor::run(matches, None),
+            "vscode" => crate::subcommands::editor::vscode::run(matches, None),
+            "zed" => crate::subcommands::editor::zed::run(matches, None),
+            other => Err(crate::Error::Config(format!(
+                "editor_run: unknown editor {other:?}"
+            ))),
+        }
     }
 }

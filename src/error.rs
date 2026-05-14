@@ -150,15 +150,100 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod tests {
     use super::*;
 
+    // The Display strings on these variants are part of brontes's public
+    // user-facing surface — they appear in error messages a downstream
+    // consumer's `main` propagates to stderr or stdout. The assertions
+    // below pin each variant's exact `Display` output so a future change
+    // to the `#[error("…")]` attribute (rename, punctuation drift,
+    // dropped `{path}` field) breaks the test loudly instead of silently
+    // shipping a different consumer-visible message.
+
     #[test]
-    fn config_error_renders() {
+    fn config_error_display_pin() {
         let e = Error::Config("bad path".into());
         assert_eq!(e.to_string(), "config error: bad path");
     }
 
     #[test]
-    fn spawn_error_wraps_io() {
+    fn spawn_error_display_pin() {
         let e = Error::Spawn(std::io::Error::other("nope"));
-        assert!(e.to_string().contains("could not spawn subprocess"));
+        assert_eq!(e.to_string(), "could not spawn subprocess: nope");
+    }
+
+    #[test]
+    fn io_error_display_includes_context_and_source() {
+        let e = Error::Io {
+            context: "open ./mcp-tools.json".into(),
+            source: std::io::Error::other("disk gone"),
+        };
+        assert_eq!(
+            e.to_string(),
+            "io error at open ./mcp-tools.json: disk gone"
+        );
+    }
+
+    #[test]
+    fn schema_error_display_pin() {
+        let e = Error::Schema("missing required field".into());
+        assert_eq!(e.to_string(), "schema error: missing required field");
+    }
+
+    #[test]
+    fn editor_config_read_display_pin() {
+        let e = Error::EditorConfigRead {
+            path: PathBuf::from("/etc/x.json"),
+            source: std::io::Error::other("permission denied"),
+        };
+        assert_eq!(
+            e.to_string(),
+            "editor config: read failed at /etc/x.json: permission denied"
+        );
+    }
+
+    #[test]
+    fn editor_config_json_display_pin() {
+        // Build a real serde_json::Error so the `{source}` interpolation
+        // gets exercised against a representative payload, not a stub.
+        let json_err = serde_json::from_str::<serde_json::Value>("{not-json")
+            .expect_err("malformed JSON must error");
+        let e = Error::EditorConfigJson {
+            path: PathBuf::from("/tmp/y.json"),
+            source: json_err,
+        };
+        let s = e.to_string();
+        assert!(
+            s.starts_with("editor config: JSON error at /tmp/y.json: "),
+            "got {s}"
+        );
+    }
+
+    #[test]
+    fn editor_config_backup_display_pin() {
+        let e = Error::EditorConfigBackup {
+            path: PathBuf::from("/tmp/z.backup.json"),
+            source: std::io::Error::other("readonly"),
+        };
+        assert_eq!(
+            e.to_string(),
+            "editor config: backup failed for /tmp/z.backup.json: readonly"
+        );
+    }
+
+    #[test]
+    fn editor_config_write_display_pin() {
+        let e = Error::EditorConfigWrite {
+            path: PathBuf::from("/tmp/w.json"),
+            source: std::io::Error::other("no space"),
+        };
+        assert_eq!(
+            e.to_string(),
+            "editor config: write failed at /tmp/w.json: no space"
+        );
+    }
+
+    #[test]
+    fn panic_error_display_pin() {
+        let e = Error::Panic("middleware blew up".into());
+        assert_eq!(e.to_string(), "panic: middleware blew up");
     }
 }

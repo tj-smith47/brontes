@@ -522,9 +522,37 @@ pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Conf
 /// }
 /// ```
 pub async fn run(cli: Command, cfg: Option<&Config>) -> Result<()> {
+    // `std::env::ArgsOs` is `!Send`, so eagerly collect into a Vec<OsString>
+    // (which is `Send`) before await-ing `run_from` — otherwise the
+    // returned future inherits the !Send bound from the iterator and
+    // breaks downstream callers that want a Send future.
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    run_from(cli, cfg, argv).await
+}
+
+/// Same as [`run`] but reads argv from an explicit iterator instead of
+/// the process environment.
+///
+/// Production code uses [`run`] (which reads `std::env::args_os()`); the
+/// integration test crate uses this to drive `run`'s argv-parsing /
+/// dispatch logic with synthetic input — `get_matches` consumes the
+/// process argv unconditionally, so the only way to exercise `run` in
+/// a test without exec'ing a subprocess is to inject the args directly.
+///
+/// `pub` (not `pub(crate)`) so the `__test_internal` re-export in
+/// `lib.rs` can carry it out; effective visibility is crate-internal.
+///
+/// # Errors
+///
+/// Same as [`run`].
+pub async fn run_from<I, T>(cli: Command, cfg: Option<&Config>, argv: I) -> Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
     let mounted = cli.subcommand(command(cfg));
     let cli_for_dispatch = mounted.clone();
-    let matches = mounted.get_matches();
+    let matches = mounted.get_matches_from(argv);
     match matches.subcommand() {
         Some((name, sub)) => {
             let group_name = cfg
@@ -714,6 +742,100 @@ mod tests {
         assert!(
             matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("description_modes")),
             "expected Config error for unknown description_mode path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_unknown_deprecated_path() {
+        // A `.deprecate("path")` on a path that doesn't exist must surface
+        // as Error::Config at validate time — silently dropping a deprecate
+        // would leave the command visible to MCP clients, which is the
+        // exact bug the validator is supposed to catch.
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default().deprecate("myapp nonexistent");
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("deprecated_commands")),
+            "expected Config error for unknown deprecate path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_unknown_flag_type_override_path() {
+        // `.flag_type_override(path, flag, kind)` runs through the same
+        // validate_flag_path helper as flag_schemas; the unknown-path arm
+        // is distinct from the unknown-flag arm and must be exercised
+        // independently.
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default().flag_type_override(
+            "myapp nonexistent",
+            "limit",
+            crate::schema::SchemaType::Array,
+        );
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("flag_type_overrides")),
+            "expected Config error for unknown flag_type_override path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_unknown_flag_on_known_path_for_flag_type_override() {
+        // The known-path / unknown-flag branch of validate_flag_path,
+        // routed through flag_type_overrides specifically (the
+        // flag_schemas variant is already covered).
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default().flag_type_override(
+            "myapp list",
+            "nonexistent-flag",
+            crate::schema::SchemaType::Array,
+        );
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("flag_type_overrides") && msg.contains("nonexistent-flag")),
+            "expected unknown-flag Config error mentioning flag_type_overrides, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_selector_referencing_unknown_path() {
+        // A factory-built selector like `allow_cmds(["unknown"])` carries
+        // its captured paths into the selector machinery; validate_paths
+        // introspects via crate::selectors::lookup and rejects when any
+        // captured path is not in the walked tree.
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default().selector(crate::Selector {
+            cmd: Some(crate::selectors::allow_cmds(["myapp nonexistent"])),
+            ..Default::default()
+        });
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("Selector references unknown command path")),
+            "expected Config error for selector referencing unknown path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_warns_but_accepts_substring_selector_with_no_match() {
+        // Substring selectors are permissive (the warn-but-allow arm) —
+        // an `allow_cmds_containing(["zzzzzz"])` against a tree that has
+        // no path containing "zzzzzz" must NOT error; it just emits a
+        // `tracing::warn!`. We can't assert the warn without a subscriber
+        // capture here, but we CAN assert validate_paths returns Ok so
+        // the warn-vs-error policy stays pinned.
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default().selector(crate::Selector {
+            cmd: Some(crate::selectors::allow_cmds_containing(["zzzzzz"])),
+            ..Default::default()
+        });
+        assert!(
+            validate_paths(&resolved, &cfg).is_ok(),
+            "substring selector with no match must warn, not error"
         );
     }
 

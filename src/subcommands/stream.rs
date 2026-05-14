@@ -78,6 +78,37 @@ pub fn build() -> Command {
 /// - Any error surfaced by [`crate::server::http::serve_http`] (bind
 ///   failure, schema/config error from the pre-walk, transport panic).
 pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
+    // Production entry: mint a fresh cancel token, wire the signal
+    // listener into it, then delegate to `run_with_cancel` for the
+    // argv-parsing + serve-http body. The split lets the integration
+    // test crate drive the body with a pre-cancelled token (which makes
+    // `serve_http` return immediately after bind) without firing real
+    // SIGINT/SIGTERM at the test process.
+    let cancel = CancellationToken::new();
+    super::signal::spawn_signal_listener(cancel.clone());
+    run_with_cancel(matches, cli, cfg, cancel).await
+}
+
+/// Same body as [`run`] without the implicit signal-listener install.
+///
+/// Production callers use [`run`]; the integration test crate reaches
+/// this via [`crate::__test_internal::stream_run_with_cancel`] to drive
+/// the post-parse, pre-bind logic with a token it controls. Mirrors how
+/// [`crate::server::http::serve_http`] delegates to
+/// [`crate::server::http::serve_http_with`].
+///
+/// `pub` (not `pub(crate)`) so the `__test_internal` re-export in
+/// `lib.rs` can carry it out; effective visibility is crate-internal.
+///
+/// # Errors
+///
+/// Same as [`run`].
+pub async fn run_with_cancel(
+    matches: &ArgMatches,
+    cli: Command,
+    cfg: Option<Config>,
+    cancel: CancellationToken,
+) -> Result<()> {
     let cfg = cfg.unwrap_or_default();
     let log_level = parse_log_level(matches);
     init_tracing(log_level.or(cfg.log_level));
@@ -95,9 +126,6 @@ pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Res
             "invalid --host/--port combination {host:?}:{port}: {e}"
         ))
     })?;
-
-    let cancel = CancellationToken::new();
-    super::signal::spawn_signal_listener(cancel.clone());
 
     // Startup log line matches ophis `config.go:124`:
     // `fmt.Sprintf("MCP server listening on address %q", addr)`. The

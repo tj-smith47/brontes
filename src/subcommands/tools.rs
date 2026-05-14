@@ -172,4 +172,24 @@ mod tests {
         let got = std::fs::read(&path).expect("read back");
         assert_eq!(got, b"fresh\n");
     }
+
+    #[test]
+    fn write_atomic_returns_io_error_when_parent_dir_missing() {
+        // NamedTempFile::new_in fails when the parent directory does not
+        // exist; the error must surface as `Error::Io` carrying a
+        // context that mentions the failed directory — that mapping is
+        // the contract `mcp tools` exposes to its caller.
+        let path = std::path::PathBuf::from("/this/path/does/not/exist/out.json");
+        let err = write_atomic(&path, b"x").expect_err("must fail");
+        match err {
+            crate::Error::Io { context, .. } => {
+                assert!(
+                    context.contains("create temp file in")
+                        && context.contains("/this/path/does/not/exist"),
+                    "context must name the failed dir, got: {context}"
+                );
+            }
+            other => panic!("expected Error::Io, got: {other}"),
+        }
+    }
 }

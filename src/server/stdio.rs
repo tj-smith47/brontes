@@ -13,6 +13,7 @@
 use clap::Command;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
@@ -50,11 +51,41 @@ pub async fn serve_stdio(
     let cancel = CancellationToken::new();
     crate::subcommands::signal::spawn_signal_listener(cancel.clone());
 
+    serve_stdio_with(cli, cfg, stdio(), cancel).await
+}
+
+/// Generic core of [`serve_stdio`]: serve [`BrontesServer`] over the
+/// supplied `(reader, writer)` transport pair.
+///
+/// Production code reaches this via [`serve_stdio`] (which passes
+/// [`rmcp::transport::stdio`]'s real-stdin / real-stdout pair); the
+/// integration test crate passes an in-memory [`tokio::io::duplex`] pair
+/// so the server can be driven by a real client peer over a synthetic
+/// transport without touching the process stdio. Mirrors the
+/// [`crate::server::http::serve_http`] →
+/// [`crate::server::http::serve_http_with`] split.
+///
+/// `pub` (not `pub(crate)`) so the `__test_internal` re-export in
+/// `lib.rs` can carry it out; effective visibility is crate-internal.
+///
+/// # Errors
+///
+/// Same as [`serve_stdio`].
+pub async fn serve_stdio_with<R, W>(
+    cli: Command,
+    cfg: Config,
+    transport: (R, W),
+    cancel: CancellationToken,
+) -> Result<()>
+where
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
+{
     // `BrontesServer::new` walks the tree and caches the tool list at
     // construction; a bad config surfaces as a startup failure here rather
     // than as a silent server that fails the first `tools/list` request.
     let server = BrontesServer::new(cli, cfg)?;
-    let running = server.serve_with_ct(stdio(), cancel).await?;
+    let running = server.serve_with_ct(transport, cancel).await?;
 
     // `waiting` returns the quit reason; a join error from the underlying
     // task represents a panic-in-task, not an I/O failure — surface it as
