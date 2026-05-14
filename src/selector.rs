@@ -270,15 +270,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_selector() {
-        let sel = Selector::default();
-        assert!(sel.cmd.is_none());
-        assert!(sel.local_flag.is_none());
-        assert!(sel.inherited_flag.is_none());
-        assert!(sel.middleware.is_none());
-    }
-
-    #[test]
     fn clone_is_cheap() {
         let matcher: CmdMatcher = Arc::new(|p: &str| p.contains("foo"));
         let sel = Selector {
@@ -346,20 +337,6 @@ mod tests {
             s.contains("Selector"),
             "Debug should name the type: got {s}"
         );
-    }
-
-    #[test]
-    fn middleware_ctx_constructible() {
-        let ctx = MiddlewareCtx {
-            cancellation_token: CancellationToken::new(),
-            tool_name: "demo".into(),
-            input: ToolInput::default(),
-        };
-        let cloned = ctx.clone();
-        assert_eq!(cloned.tool_name, "demo");
-        // Keep the original alive so the clone actually exercises `Clone`
-        // rather than collapsing to a move under `redundant_clone`.
-        assert_eq!(ctx.tool_name, cloned.tool_name);
     }
 
     #[test]

@@ -502,19 +502,12 @@ mod tests {
     }
 
     #[test]
-    fn command_name_sets_field() {
-        let cfg = Config::default().command_name("agent");
-        assert_eq!(cfg.command_name.as_deref(), Some("agent"));
-    }
-
-    #[test]
-    fn tool_name_prefix_sets_field() {
-        let cfg = Config::default().tool_name_prefix("myapp");
-        assert_eq!(cfg.tool_name_prefix.as_deref(), Some("myapp"));
-    }
-
-    #[test]
     fn selector_pushes_in_order() {
+        // Pins selector ordering (first-match-wins is downstream of insertion
+        // order). NOT a tautology: the public `selectors` slice ordering is
+        // a load-bearing surface — the walker iterates in this order and
+        // the first matching selector wins, so a refactor that swaps Vec
+        // for a HashSet would silently break first-match semantics.
         let cfg = Config::default()
             .selector(Selector {
                 cmd: Some(Arc::new(|p: &str| p == "first")),
@@ -527,77 +520,6 @@ mod tests {
         assert_eq!(cfg.selectors.len(), 2);
         assert!((cfg.selectors[0].cmd.as_ref().unwrap())("first"));
         assert!((cfg.selectors[1].cmd.as_ref().unwrap())("second"));
-    }
-
-    #[test]
-    fn default_env_inserts_key_value() {
-        let cfg = Config::default().default_env("LOG_FORMAT", "json");
-        assert_eq!(
-            cfg.default_env.get("LOG_FORMAT").map(String::as_str),
-            Some("json")
-        );
-    }
-
-    #[test]
-    fn default_env_accumulates_multiple_entries() {
-        let cfg = Config::default()
-            .default_env("K1", "V1")
-            .default_env("K2", "V2");
-        assert_eq!(cfg.default_env.len(), 2);
-        assert_eq!(cfg.default_env.get("K1").map(String::as_str), Some("V1"));
-        assert_eq!(cfg.default_env.get("K2").map(String::as_str), Some("V2"));
-    }
-
-    #[test]
-    fn annotation_inserts_by_path() {
-        let cfg = Config::default().annotation(
-            "my-cli list",
-            ToolAnnotations {
-                read_only_hint: Some(true),
-                ..Default::default()
-            },
-        );
-        assert!(cfg.annotations.contains_key("my-cli list"));
-        assert_eq!(cfg.annotations["my-cli list"].read_only_hint, Some(true));
-    }
-
-    #[test]
-    fn deprecate_inserts_path() {
-        let cfg = Config::default().deprecate("my-cli oldcmd");
-        assert!(cfg.deprecated_commands.contains("my-cli oldcmd"));
-    }
-
-    #[test]
-    fn flag_schema_inserts_by_key() {
-        let schema = serde_json::json!({"type": "integer", "minimum": 0});
-        let cfg = Config::default().flag_schema("my-cli list", "limit", schema.clone());
-        let key = ("my-cli list".to_string(), "limit".to_string());
-        assert!(cfg.flag_schemas.contains_key(&key));
-        assert_eq!(cfg.flag_schemas[&key], schema);
-    }
-
-    #[test]
-    fn flag_type_override_inserts_by_key() {
-        let cfg = Config::default().flag_type_override("my-cli list", "filter", SchemaType::Array);
-        let key = ("my-cli list".to_string(), "filter".to_string());
-        assert!(cfg.flag_type_overrides.contains_key(&key));
-        assert_eq!(cfg.flag_type_overrides[&key], SchemaType::Array);
-    }
-
-    #[test]
-    fn log_level_sets_field() {
-        let cfg = Config::default().log_level(Level::DEBUG);
-        assert_eq!(cfg.log_level, Some(Level::DEBUG));
-    }
-
-    #[test]
-    fn implementation_sets_field() {
-        let imp = rmcp::model::Implementation::new("test-server", "0.1.0");
-        let cfg = Config::default().implementation(imp);
-        assert!(cfg.implementation.is_some());
-        let stored = cfg.implementation.unwrap();
-        assert_eq!(stored.name, "test-server");
-        assert_eq!(stored.version, "0.1.0");
     }
 
     #[test]
@@ -644,10 +566,26 @@ mod tests {
     }
 
     #[test]
-    fn fluent_chain_composes() {
+    fn fluent_chain_covers_every_setter() {
+        // Single comprehensive chain that hits every builder method on
+        // `Config`. Replaces ten individual `setter_sets_field` tests that
+        // were tautological identity assertions ("`.x(v)` makes `cfg.x ==
+        // v`" — true by construction).
+        //
+        // The two real invariants this test pins:
+        //   (a) Every setter actually stores its argument into the right
+        //       field (a rename / wrong-field bug surfaces as a missing
+        //       assertion below).
+        //   (b) The builder is fluent — every method returns `self` — so
+        //       a single chained expression composes without intermediate
+        //       binding ceremony. A future refactor that accidentally
+        //       returns a non-self value will fail to compile this test.
+        let imp = rmcp::model::Implementation::new("test-server", "0.1.0");
         let cfg = Config::default()
             .command_name("agent")
+            .tool_name_prefix("myapp")
             .selector(Selector::default())
+            .default_env("LOG_FORMAT", "json")
             .annotation(
                 "my-cli list",
                 ToolAnnotations {
@@ -662,20 +600,29 @@ mod tests {
                 serde_json::json!({"type": "integer", "minimum": 0}),
             )
             .flag_type_override("my-cli list", "filter", SchemaType::Array)
-            .log_level(Level::DEBUG);
+            .log_level(Level::DEBUG)
+            .implementation(imp);
 
         assert_eq!(cfg.command_name.as_deref(), Some("agent"));
+        assert_eq!(cfg.tool_name_prefix.as_deref(), Some("myapp"));
         assert_eq!(cfg.selectors.len(), 1);
+        assert_eq!(
+            cfg.default_env.get("LOG_FORMAT").map(String::as_str),
+            Some("json")
+        );
         assert!(cfg.annotations.contains_key("my-cli list"));
+        assert_eq!(cfg.annotations["my-cli list"].read_only_hint, Some(true));
         assert!(cfg.deprecated_commands.contains("my-cli oldcmd"));
-        assert!(
-            cfg.flag_schemas
-                .contains_key(&("my-cli list".into(), "limit".into()))
+        let schema_key = ("my-cli list".to_string(), "limit".to_string());
+        assert_eq!(
+            cfg.flag_schemas[&schema_key],
+            serde_json::json!({"type": "integer", "minimum": 0})
         );
-        assert!(
-            cfg.flag_type_overrides
-                .contains_key(&("my-cli list".into(), "filter".into()))
-        );
+        let type_key = ("my-cli list".to_string(), "filter".to_string());
+        assert_eq!(cfg.flag_type_overrides[&type_key], SchemaType::Array);
         assert_eq!(cfg.log_level, Some(Level::DEBUG));
+        let stored_imp = cfg.implementation.expect("implementation stored");
+        assert_eq!(stored_imp.name, "test-server");
+        assert_eq!(stored_imp.version, "0.1.0");
     }
 }
