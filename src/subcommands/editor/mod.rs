@@ -24,6 +24,7 @@
 pub mod claude;
 pub mod cursor;
 pub mod vscode;
+pub mod zed;
 
 use std::collections::BTreeMap;
 

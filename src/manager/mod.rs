@@ -34,6 +34,7 @@ pub mod claude;
 pub mod cursor;
 pub mod paths;
 pub mod vscode;
+pub mod zed;
 
 use std::path::{Path, PathBuf};
 
@@ -107,6 +108,20 @@ pub trait EditorConfig: serde::Serialize + serde::de::DeserializeOwned + Default
     /// boxed iterator keeps the trait object-safe-ish and avoids leaking
     /// the concrete map type through the trait.
     fn server_names(&self) -> Box<dyn Iterator<Item = &str> + '_>;
+
+    /// Optional load-time byte transform applied to the raw on-disk file
+    /// before `serde_json` deserialization.
+    ///
+    /// Default implementation is the identity (strict JSON in, strict JSON
+    /// out) — Claude / Cursor / `VSCode` all write strict JSON and need no
+    /// transform. The [`zed::ZedConfig`] override strips JSONC syntax
+    /// (line comments, block comments, trailing commas) so Zed's hand-
+    /// editable `settings.json` parses cleanly. Mirrors the ophis
+    /// `Preprocessor` interface added in `njayp/ophis#46`.
+    #[must_use]
+    fn preprocess(bytes: Vec<u8>) -> Vec<u8> {
+        bytes
+    }
 }
 
 /// Generic manager that load / mutates / saves an editor's MCP config.
@@ -139,6 +154,10 @@ impl<C: EditorConfig> Manager<C> {
             path: path.clone(),
             source: e,
         })?;
+        // Per-editor byte transform — identity for strict-JSON editors
+        // (Claude / Cursor / `VSCode`), JSONC-strip for Zed. See
+        // `EditorConfig::preprocess`.
+        let data = C::preprocess(data);
         let config: C = serde_json::from_slice(&data).map_err(|e| Error::EditorConfigJson {
             path: path.clone(),
             source: e,

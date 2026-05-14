@@ -405,6 +405,138 @@ fn vscode_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
     PathBuf::from(".vscode").join("mcp.json")
 }
 
+/// Default Zed user-mode `settings.json` path for the current platform.
+///
+/// macOS: `$HOME_DIR/.config/zed/settings.json` (Zed on macOS follows the
+/// XDG-style `~/.config/zed/` layout rather than `Library/Application
+/// Support`), falling back to `/Users/$USER/.config/zed/settings.json`
+/// when `dirs::home_dir()` returns `None`.
+///
+/// Linux: respects `$XDG_CONFIG_HOME`; otherwise
+/// `$HOME_DIR/.config/zed/settings.json`, falling back to
+/// `/home/$USER/.config/zed/settings.json` when home is unresolved.
+///
+/// Windows: `$APPDATA\Zed\settings.json`, falling back to
+/// `$USERPROFILE\AppData\Roaming\Zed\settings.json` when `APPDATA` is
+/// missing.
+///
+/// Mirrors ophis `njayp/ophis#46`'s `zed_{darwin,linux,windows}.go`.
+#[must_use]
+pub fn zed_config_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir();
+        let user = std::env::var("USER").unwrap_or_default();
+        zed_config_path_macos_from(home.as_deref(), &user)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let home = dirs::home_dir();
+        let xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let user = std::env::var("USER").unwrap_or_default();
+        zed_config_path_linux_from(home.as_deref(), xdg.as_deref(), &user)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").ok();
+        let userprofile = std::env::var("USERPROFILE").ok();
+        zed_config_path_windows_from(appdata.as_deref(), userprofile.as_deref())
+    }
+    // Fallback for non-tier-1 targets (BSD, illumos, etc.): treat as Linux.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let home = dirs::home_dir();
+        let xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let user = std::env::var("USER").unwrap_or_default();
+        zed_config_path_linux_from(home.as_deref(), xdg.as_deref(), &user)
+    }
+}
+
+/// Zed workspace-mode `settings.json` path: `$CWD/.zed/settings.json`,
+/// falling back to the relative `.zed/settings.json` when
+/// `std::env::current_dir()` fails.
+#[must_use]
+pub fn zed_workspace_path() -> PathBuf {
+    zed_workspace_path_from(std::env::current_dir().ok().as_deref())
+}
+
+/// Pure macOS resolver for Zed user-mode.
+#[cfg(any(target_os = "macos", test))]
+fn zed_config_path_macos_from(home: Option<&std::path::Path>, user: &str) -> PathBuf {
+    if let Some(home) = home {
+        return home.join(".config").join("zed").join("settings.json");
+    }
+    PathBuf::from("/Users")
+        .join(user)
+        .join(".config")
+        .join("zed")
+        .join("settings.json")
+}
+
+/// Pure Linux resolver for Zed user-mode.
+///
+/// Zed on Linux DOES consult `$XDG_CONFIG_HOME` (unlike Cursor and `VSCode`
+/// which do not). The fallback chain matches ophis: XDG → `$HOME/.config`
+/// → `/home/$USER/.config`.
+#[cfg(any(
+    target_os = "linux",
+    not(any(target_os = "macos", target_os = "windows")),
+    test
+))]
+fn zed_config_path_linux_from(
+    home: Option<&std::path::Path>,
+    xdg_config_home: Option<&str>,
+    user: &str,
+) -> PathBuf {
+    if let Some(home) = home {
+        let cfg_root = match xdg_config_home {
+            Some(v) if !v.is_empty() => PathBuf::from(v),
+            _ => home.join(".config"),
+        };
+        return cfg_root.join("zed").join("settings.json");
+    }
+    PathBuf::from("/home")
+        .join(user)
+        .join(".config")
+        .join("zed")
+        .join("settings.json")
+}
+
+/// Pure Windows resolver for Zed user-mode.
+///
+/// Prefers `%APPDATA%\Zed\settings.json`, falls back to
+/// `%USERPROFILE%\AppData\Roaming\Zed\settings.json`. No `C:\Users\Default`
+/// literal — Zed's Windows layout does not document that fallback, so we
+/// surface a relative path (matching the Cursor/`VSCode` pattern) rather
+/// than invent one.
+#[cfg(any(target_os = "windows", test))]
+fn zed_config_path_windows_from(appdata: Option<&str>, userprofile: Option<&str>) -> PathBuf {
+    if let Some(v) = appdata.filter(|s| !s.is_empty()) {
+        return PathBuf::from(v).join("Zed").join("settings.json");
+    }
+    if let Some(v) = userprofile.filter(|s| !s.is_empty()) {
+        return PathBuf::from(v)
+            .join("AppData")
+            .join("Roaming")
+            .join("Zed")
+            .join("settings.json");
+    }
+    PathBuf::from("AppData")
+        .join("Roaming")
+        .join("Zed")
+        .join("settings.json")
+}
+
+/// Pure workspace resolver for Zed. `cwd` is `Some` when
+/// `std::env::current_dir()` resolves; `None` falls back to the relative
+/// `.zed/settings.json` (matches the Cursor/`VSCode` shape).
+fn zed_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
+    if let Some(cwd) = cwd {
+        return cwd.join(".zed").join("settings.json");
+    }
+    PathBuf::from(".zed").join("settings.json")
+}
+
 /// Strip exactly one trailing extension from the file-stem portion of a
 /// path, matching ophis `manager.DeriveServerName` (`utils.go:13-20`).
 ///
@@ -802,5 +934,136 @@ mod tests {
     fn vscode_workspace_falls_back_to_relative_when_cwd_unresolved() {
         let path = vscode_workspace_path_from(None);
         assert_eq!(path, PathBuf::from(".vscode").join("mcp.json"));
+    }
+
+    // ── Zed (user) macOS resolver ─────────────────────────────────────
+
+    #[test]
+    fn zed_macos_uses_dot_config_zed_when_home_resolves() {
+        // Zed on macOS does NOT use `Library/Application Support` (that is
+        // Claude's macOS layout). It uses `~/.config/zed/settings.json`
+        // matching ophis `zed_darwin.go`.
+        let path = zed_config_path_macos_from(Some(Path::new("/Users/synthetic")), "synthetic");
+        assert_eq!(
+            path,
+            PathBuf::from("/Users/synthetic/.config/zed/settings.json")
+        );
+    }
+
+    #[test]
+    fn zed_macos_falls_back_to_users_user_when_home_unresolved() {
+        let path = zed_config_path_macos_from(None, "fallback");
+        assert_eq!(
+            path,
+            PathBuf::from("/Users/fallback/.config/zed/settings.json")
+        );
+    }
+
+    // ── Zed (user) Linux resolver ─────────────────────────────────────
+
+    #[test]
+    fn zed_linux_uses_dollar_home_dot_config_when_xdg_unset() {
+        let path =
+            zed_config_path_linux_from(Some(Path::new("/home/synthetic")), None, "synthetic");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/synthetic/.config/zed/settings.json")
+        );
+    }
+
+    #[test]
+    fn zed_linux_uses_dollar_home_dot_config_when_xdg_empty() {
+        // Empty XDG_CONFIG_HOME must fall through to the $HOME/.config path
+        // (matches ophis behavior on `os.Getenv` returning the empty string).
+        let path =
+            zed_config_path_linux_from(Some(Path::new("/home/synthetic")), Some(""), "synthetic");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/synthetic/.config/zed/settings.json")
+        );
+    }
+
+    #[test]
+    fn zed_linux_honors_xdg_config_home() {
+        // Zed on Linux respects XDG_CONFIG_HOME (Claude also does; Cursor
+        // and VSCode do NOT). Verify the XDG-pointed root is honored.
+        let path = zed_config_path_linux_from(
+            Some(Path::new("/home/synthetic")),
+            Some("/custom/xdg"),
+            "synthetic",
+        );
+        assert_eq!(path, PathBuf::from("/custom/xdg/zed/settings.json"));
+    }
+
+    #[test]
+    fn zed_linux_falls_back_to_home_user_when_home_unresolved() {
+        let path = zed_config_path_linux_from(None, None, "fallback");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/fallback/.config/zed/settings.json")
+        );
+    }
+
+    // ── Zed (user) Windows resolver ───────────────────────────────────
+
+    #[test]
+    fn zed_windows_prefers_appdata() {
+        let path = zed_config_path_windows_from(
+            Some(r"C:\Users\synth\AppData\Roaming"),
+            Some(r"C:\Users\synth"),
+        );
+        let s = path.to_string_lossy();
+        assert!(s.contains("Zed"), "got {s}");
+        assert!(s.contains("settings.json"), "got {s}");
+        assert!(
+            s.contains("Roaming"),
+            "must include the Roaming segment from APPDATA, got {s}"
+        );
+    }
+
+    #[test]
+    fn zed_windows_falls_back_to_userprofile_when_appdata_empty() {
+        let path = zed_config_path_windows_from(Some(""), Some(r"C:\Users\synth"));
+        let s = path.to_string_lossy();
+        assert!(s.contains("AppData"), "got {s}");
+        assert!(s.contains("Roaming"), "got {s}");
+        assert!(s.contains("Zed"), "got {s}");
+    }
+
+    #[test]
+    fn zed_windows_falls_back_to_userprofile_when_appdata_none() {
+        let path = zed_config_path_windows_from(None, Some(r"C:\Users\synth"));
+        let s = path.to_string_lossy();
+        assert!(s.contains("AppData"), "got {s}");
+        assert!(s.contains("Roaming"), "got {s}");
+        assert!(s.contains("Zed"), "got {s}");
+    }
+
+    #[test]
+    fn zed_windows_relative_fallback_when_all_unresolved() {
+        // Both env vars missing — fall back to a relative path so the caller
+        // still gets a usable PathBuf; the error surfaces at file open.
+        let path = zed_config_path_windows_from(None, None);
+        assert_eq!(
+            path,
+            PathBuf::from("AppData")
+                .join("Roaming")
+                .join("Zed")
+                .join("settings.json")
+        );
+    }
+
+    // ── Zed workspace-mode resolver ───────────────────────────────────
+
+    #[test]
+    fn zed_workspace_uses_cwd_when_resolves() {
+        let path = zed_workspace_path_from(Some(Path::new("/tmp/myproj")));
+        assert_eq!(path, PathBuf::from("/tmp/myproj/.zed/settings.json"));
+    }
+
+    #[test]
+    fn zed_workspace_falls_back_to_relative_when_cwd_unresolved() {
+        let path = zed_workspace_path_from(None);
+        assert_eq!(path, PathBuf::from(".zed").join("settings.json"));
     }
 }

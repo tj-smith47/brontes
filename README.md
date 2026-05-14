@@ -15,7 +15,7 @@ Written by [Claude](https://claude.ai) (Opus 4.6 / 4.7); maintained by us.
 
 ## Why brontes
 
-- **Ship existing CLIs to AI agents in two lines.** Mount `brontes::command` and dispatch with `brontes::handle`; every clap subcommand becomes an MCP tool, instantly usable from Claude Desktop, Cursor, and VSCode.
+- **Ship existing CLIs to AI agents in two lines.** Mount `brontes::command` and dispatch with `brontes::handle`; every clap subcommand becomes an MCP tool, instantly usable from Claude Desktop, Cursor, VSCode, and Zed.
 - **Token-efficient by design.** Per-command description overrides, `Short`/`Long` mode toggle, deprecation filter, and `after_help` "Examples:" promotion let you trim the description surface the LLM has to read.
 - **Production-ready security defaults.** Streamable HTTP transport is loopback-only by default via rmcp's DNS-rebind allow-list; widen it explicitly with `--allow-host`. Auth is not built in — wire it through `Middleware`.
 - **Async middleware boundary.** Wrap tool execution with auth, audit logging, rate limiting, or distributed tracing without forking the runtime.
@@ -45,6 +45,7 @@ Written by [Claude](https://claude.ai) (Opus 4.6 / 4.7); maintained by us.
                               │   • Claude Desktop       │
                               │   • Cursor (user + ws)   │
                               │   • VSCode (user + ws)   │
+                              │   • Zed    (user + ws)   │
                               └──────────────────────────┘
 ```
 
@@ -110,6 +111,14 @@ $ my-cli mcp cursor enable --workspace
 # Register in VSCode (user mode)
 $ my-cli mcp vscode enable
 
+# Register in Zed (user mode, ~/.config/zed/settings.json on macOS/Linux,
+# %APPDATA%\Zed\settings.json on Windows; preserves theme/font/keymap and
+# any other unrelated top-level keys in settings.json on round-trip).
+$ my-cli mcp zed enable
+
+# Per-workspace Zed config (lives in $CWD/.zed/settings.json).
+$ my-cli mcp zed enable --workspace
+
 # List the configured servers for a given editor
 $ my-cli mcp claude list
 
@@ -126,10 +135,18 @@ Shared flags on every `enable`:
 | `--env KEY=VAL` (`-e`, repeatable) | Append environment variables the editor will inject when launching the server |
 | `--log-level <LEVEL>` | Set the server's tracing level (`trace`/`debug`/`info`/`warn`/`error`) |
 
-`--workspace` is additionally accepted on `cursor` and `vscode`'s `enable`,
-`disable`, AND `list` leaves — pass it whenever you want the workspace-mode
-config (`$CWD/.cursor/mcp.json` or `$CWD/.vscode/mcp.json`) instead of the
-per-OS user config.
+`--workspace` is additionally accepted on `cursor`, `vscode`, AND `zed`'s
+`enable`, `disable`, and `list` leaves — pass it whenever you want the
+workspace-mode config (`$CWD/.cursor/mcp.json`, `$CWD/.vscode/mcp.json`,
+or `$CWD/.zed/settings.json`) instead of the per-OS user config.
+
+Zed differs structurally from the other three editors: its `settings.json`
+also carries the user's theme, font, keymap, and other editor settings.
+brontes parses the file as JSONC (line comments and trailing commas are
+tolerated on load), writes back strict JSON, and preserves every
+non-`context_servers` top-level key verbatim. The first write strips
+JSONC comments — same trade-off the upstream Zed CLI accepts when it
+rewrites the file.
 
 Backups are **only** written when an existing file is mutated — first writes don't litter `.backup.json` files. See [SECURITY.md](SECURITY.md) for the editor-config threat surface.
 
@@ -140,7 +157,7 @@ Backups are **only** written when an existing file is mutated — first writes d
 | CLI framework | clap | cobra |
 | Stdio MCP server | yes | yes |
 | Streamable HTTP MCP | yes (rmcp 1.6) | yes ([#15](https://github.com/njayp/ophis/pull/15)) |
-| Editor managers: Claude / Cursor / VSCode | all three | ✅ all three<br>(Zed pending [#46](https://github.com/njayp/ophis/pull/46)) |
+| Editor managers: Claude / Cursor / VSCode / Zed | all four (Zed preserves unrelated `settings.json` keys + accepts JSONC on load) | Claude / Cursor / VSCode shipped; Zed pending [#46](https://github.com/njayp/ophis/pull/46) |
 | Middleware (async wrap) | yes | yes ([#34](https://github.com/njayp/ophis/pull/34)) |
 | Default env injection | `Config::default_env` | `DefaultEnv` ([#44](https://github.com/njayp/ophis/pull/44)) |
 | Tool name prefix | `Config::tool_name_prefix` | yes ([#37](https://github.com/njayp/ophis/pull/37)) |

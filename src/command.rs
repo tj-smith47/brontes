@@ -480,6 +480,7 @@ pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Conf
         Some(("claude", sub)) => crate::subcommands::editor::claude::run(sub, Some(&cfg_owned)),
         Some(("vscode", sub)) => crate::subcommands::editor::vscode::run(sub, Some(&cfg_owned)),
         Some(("cursor", sub)) => crate::subcommands::editor::cursor::run(sub, Some(&cfg_owned)),
+        Some(("zed", sub)) => crate::subcommands::editor::zed::run(sub, Some(&cfg_owned)),
         // Guard the internal marker subcommand: it parses cleanly through the
         // clap surface (because it is registered as a hidden subcommand), but
         // it is implementation detail and is not runnable. Surface a friendly

@@ -10,7 +10,8 @@
 //! ├── stream      — serve MCP over streamable HTTP
 //! ├── claude      — manage Claude Desktop MCP servers
 //! ├── vscode      — manage VSCode MCP servers (user + workspace)
-//! └── cursor      — manage Cursor MCP servers (user + workspace)
+//! ├── cursor      — manage Cursor MCP servers (user + workspace)
+//! └── zed         — manage Zed MCP context_servers (user + workspace)
 //! ```
 //!
 //! Plus a hidden internal marker subcommand (`MARKER_NAME`) that lets
@@ -55,6 +56,7 @@ pub fn build(command_name: &str) -> Command {
         .subcommand(editor::claude::build())
         .subcommand(editor::vscode::build())
         .subcommand(editor::cursor::build())
+        .subcommand(editor::zed::build())
         .subcommand(
             // Hidden marker; carries no flags and is never meant to be run.
             // Used purely so `handle()` can fingerprint the group as ours.
