@@ -161,3 +161,17 @@ jobs:
           args: tag
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      # `anodizer tag` mints a `chore(release): bump ...` commit on top of
+      # HEAD, bumps Cargo.toml (+ Cargo.lock), tags THAT commit, and pushes
+      # the tag — but it does NOT push the bump commit itself. Without an
+      # explicit `git push origin master`, the tag points at a commit that
+      # exists only as the tag target; master HEAD on the remote stays at
+      # the pre-bump commit, future Auto-tag runs read the wrong "last
+      # commit" history, and (depending on token semantics) release.yml may
+      # fail to checkout the tag target's tree at all. Mirrors the
+      # safeguard cfgd's workflow comment (`cfgd/.github/workflows/ci.yml`)
+      # introduced for the same reason. `|| true` so a no-op tag run (only
+      # chore/docs/test commits since last release) does not fail the job.
+      - name: Push version-sync commit to master
+        run: git push origin master || true
