@@ -29,6 +29,7 @@
 !CHANGELOG.md
 !CONTRIBUTING.md
 !CODE_OF_CONDUCT.md
+!SECURITY.md
 !Taskfile.yml
 !.anodizer.yaml
 !rust-toolchain.toml

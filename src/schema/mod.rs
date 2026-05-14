@@ -98,24 +98,50 @@ pub fn build_output_schema() -> Arc<JsonObject> {
 /// Build the per-tool description string.
 ///
 /// Resolution order:
-/// 1. `cmd.get_long_about()` if set.
-/// 2. `cmd.get_about()` if set.
-/// 3. Fallback: `"Execute the {name} command"`.
-///
-/// If `cmd.get_after_help()` is set and non-empty, a blank line followed by
-/// `"Examples:"` and the after-help text is appended to the description.
-pub fn build_description(cmd: &Command) -> String {
+/// 1. If [`Config::descriptions`] has an entry for `cmd_path`, that text is
+///    returned verbatim — the `long_about`/`about`/`after_help` cascade is
+///    bypassed (the override is the user's wholesale replacement).
+/// 2. Otherwise the effective [`crate::config::DescriptionMode`] is resolved
+///    via [`Config::description_modes`] (per-path), falling back to
+///    [`Config::description_mode`] (global default `Long`).
+/// 3. The primary text is built from the resolved mode's cascade:
+///    - `Long` (default): `long_about` → fallback `about` → fallback
+///      `"Execute the {name} command"`.
+///    - `Short`: `about` → fallback `long_about` → fallback
+///      `"Execute the {name} command"`.
+/// 4. If `cmd.get_after_help()` is set and non-empty after `trim`, a blank
+///    line followed by `"Examples:"` and the trimmed after-help text is
+///    appended.
+pub fn build_description(cmd: &Command, cfg: &Config, cmd_path: &str) -> String {
+    // (1) Literal override wins outright — no cascade, no Examples append.
+    if let Some(text) = cfg.descriptions.get(cmd_path) {
+        return text.clone();
+    }
+
     let name = cmd.get_name();
-    let main = cmd
-        .get_long_about()
-        .or_else(|| cmd.get_about())
-        .map_or_else(
+
+    // (2) Resolve effective mode: per-path entry wins over the global default.
+    let mode = cfg
+        .description_modes
+        .get(cmd_path)
+        .copied()
+        .unwrap_or(cfg.description_mode);
+
+    // (3) Primary text — preferred field with the other as fallback.
+    let main = {
+        let (primary, fallback) = match mode {
+            crate::config::DescriptionMode::Long => (cmd.get_long_about(), cmd.get_about()),
+            crate::config::DescriptionMode::Short => (cmd.get_about(), cmd.get_long_about()),
+        };
+        primary.or(fallback).map_or_else(
             || format!("Execute the {name} command"),
             ToString::to_string,
-        );
+        )
+    };
 
     let mut out = main;
 
+    // (4) Optional Examples block.
     if let Some(after) = cmd.get_after_help() {
         let after_str = after.to_string();
         if !after_str.trim().is_empty() {
@@ -236,7 +262,8 @@ mod tests {
     #[test]
     fn description_uses_long_about_when_present() {
         let cmd = Command::new("test").long_about("Long form description");
-        let desc = build_description(&cmd);
+        let cfg = Config::default();
+        let desc = build_description(&cmd, &cfg, "test");
         assert!(
             desc.starts_with("Long form description"),
             "must use long_about: {desc:?}"
@@ -245,22 +272,27 @@ mod tests {
 
     #[test]
     fn description_falls_back_to_about_then_default() {
+        let cfg = Config::default();
+
         // Long set → uses long.
         let cmd_long = Command::new("test")
             .about("Short description")
             .long_about("Long description");
         assert!(
-            build_description(&cmd_long).starts_with("Long description"),
+            build_description(&cmd_long, &cfg, "test").starts_with("Long description"),
             "long_about takes precedence"
         );
 
         // Only short set → uses short.
         let cmd_short = Command::new("test").about("Short only");
-        assert_eq!(build_description(&cmd_short), "Short only");
+        assert_eq!(build_description(&cmd_short, &cfg, "test"), "Short only");
 
         // Neither set → default fallback.
         let cmd_neither = Command::new("test");
-        assert_eq!(build_description(&cmd_neither), "Execute the test command");
+        assert_eq!(
+            build_description(&cmd_neither, &cfg, "test"),
+            "Execute the test command"
+        );
     }
 
     #[test]
@@ -268,7 +300,8 @@ mod tests {
         let cmd = Command::new("test")
             .about("Does a thing")
             .after_help("example one\nexample two");
-        let desc = build_description(&cmd);
+        let cfg = Config::default();
+        let desc = build_description(&cmd, &cfg, "test");
         assert!(
             desc.contains("\n\nExamples:\nexample one\nexample two"),
             "expected examples block, got: {desc:?}"
@@ -277,17 +310,19 @@ mod tests {
 
     #[test]
     fn description_no_examples_block_when_after_help_empty() {
+        let cfg = Config::default();
+
         // Explicit empty string.
         let cmd_empty = Command::new("test").about("Does a thing").after_help("");
         assert!(
-            !build_description(&cmd_empty).contains("Examples:"),
+            !build_description(&cmd_empty, &cfg, "test").contains("Examples:"),
             "empty after_help must not produce an Examples block"
         );
 
         // No after_help at all.
         let cmd_none = Command::new("test").about("Does a thing");
         assert!(
-            !build_description(&cmd_none).contains("Examples:"),
+            !build_description(&cmd_none, &cfg, "test").contains("Examples:"),
             "absent after_help must not produce an Examples block"
         );
     }
@@ -297,11 +332,146 @@ mod tests {
         let cmd = Command::new("test")
             .about("Does a thing")
             .after_help("my example\n\n");
-        let desc = build_description(&cmd);
+        let cfg = Config::default();
+        let desc = build_description(&cmd, &cfg, "test");
         // trim_end on after_str means the block ends without a trailing newline.
         assert!(
             !desc.ends_with('\n'),
             "description must not end with a trailing newline: {desc:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // build_description tests — per-command mode + literal override
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn description_short_mode_prefers_about_over_long_about() {
+        let cmd = Command::new("test")
+            .about("Short text")
+            .long_about("Verbose long-about that wastes context");
+        let cfg = Config::default().description_mode(crate::config::DescriptionMode::Short);
+        let desc = build_description(&cmd, &cfg, "test");
+        assert!(
+            desc.starts_with("Short text"),
+            "Short mode must prefer about over long_about: {desc:?}"
+        );
+        assert!(
+            !desc.contains("Verbose long-about"),
+            "Short mode must not include long_about when about is present: {desc:?}"
+        );
+    }
+
+    #[test]
+    fn description_short_mode_falls_back_to_long_about() {
+        let cmd = Command::new("test").long_about("Only long-about set");
+        let cfg = Config::default().description_mode(crate::config::DescriptionMode::Short);
+        let desc = build_description(&cmd, &cfg, "test");
+        assert_eq!(
+            desc, "Only long-about set",
+            "Short mode must fall back to long_about when about is absent"
+        );
+    }
+
+    #[test]
+    fn description_mode_for_overrides_global_mode() {
+        let cmd = Command::new("test")
+            .about("Short text")
+            .long_about("Long text");
+        // Global = Long (default), but per-path override = Short.
+        let cfg =
+            Config::default().description_mode_for("test", crate::config::DescriptionMode::Short);
+        let desc = build_description(&cmd, &cfg, "test");
+        assert!(
+            desc.starts_with("Short text"),
+            "per-path Short override must win over global Long default: {desc:?}"
+        );
+
+        // A different path under the same Config still uses the global default.
+        let cmd_other = Command::new("other")
+            .about("other short")
+            .long_about("other long");
+        let desc_other = build_description(&cmd_other, &cfg, "other");
+        assert!(
+            desc_other.starts_with("other long"),
+            "non-overridden path must use global Long mode: {desc_other:?}"
+        );
+    }
+
+    #[test]
+    fn description_literal_override_bypasses_cascade_and_examples() {
+        let cmd = Command::new("test")
+            .long_about("ignored long-about")
+            .after_help("ignored example");
+        let cfg = Config::default().description("test", "Custom prompt");
+        let desc = build_description(&cmd, &cfg, "test");
+        assert_eq!(
+            desc, "Custom prompt",
+            "literal description override must be returned verbatim with no Examples append"
+        );
+        assert!(
+            !desc.contains("Examples:"),
+            "literal description override must not append Examples block: {desc:?}"
+        );
+    }
+
+    #[test]
+    fn description_literal_override_wins_over_description_mode_for() {
+        let cmd = Command::new("test")
+            .about("Short text")
+            .long_about("Long text");
+        let cfg = Config::default()
+            .description_mode_for("test", crate::config::DescriptionMode::Short)
+            .description("test", "Literal beats mode");
+        let desc = build_description(&cmd, &cfg, "test");
+        assert_eq!(
+            desc, "Literal beats mode",
+            "literal description must win over description_mode_for for the same path"
+        );
+    }
+
+    #[test]
+    fn description_default_mode_preserves_backward_compat() {
+        // Config::default() must keep long_about preferred over about and
+        // append the Examples block — byte-identical-output contract for
+        // existing consumers that rely on the historical description shape.
+        let cmd = Command::new("test")
+            .about("Short")
+            .long_about("Long form")
+            .after_help("ex1\nex2");
+        let cfg = Config::default();
+        let desc = build_description(&cmd, &cfg, "test");
+        assert_eq!(
+            desc, "Long form\n\nExamples:\nex1\nex2",
+            "default mode must produce byte-identical output (backward-compat)"
+        );
+    }
+
+    #[test]
+    fn description_mode_for_overrides_global_mode_long_over_short() {
+        // Symmetric to `description_mode_for_overrides_global_mode`:
+        // global=Short, per-path=Long, with both `about` and `long_about`
+        // set — long_about wins on the overridden path.
+        let cmd = Command::new("test")
+            .about("Short text")
+            .long_about("Long text");
+        let cfg = Config::default()
+            .description_mode(crate::config::DescriptionMode::Short)
+            .description_mode_for("test", crate::config::DescriptionMode::Long);
+        let desc = build_description(&cmd, &cfg, "test");
+        assert!(
+            desc.starts_with("Long text"),
+            "per-path Long override must win over global Short default: {desc:?}"
+        );
+
+        // A different path under the same Config still uses the global Short.
+        let cmd_other = Command::new("other")
+            .about("other short")
+            .long_about("other long");
+        let desc_other = build_description(&cmd_other, &cfg, "other");
+        assert!(
+            desc_other.starts_with("other short"),
+            "non-overridden path must use global Short mode: {desc_other:?}"
         );
     }
 }

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+### Added
+
+- `brontes::DescriptionMode` (`Short` / `Long`, default `Long`) plus `Config::description_mode`, `Config::description_mode_for(path, mode)`, and `Config::description(path, text)` for controlling per-tool description text. The literal `description` override bypasses the `long_about`/`about`/`after_help` cascade entirely. Default behavior is unchanged from 0.1.0; consumers opt in surgically per command or globally when verbose `long_about` text wastes the LLM's context budget. Closes the per-command description override gap (the ophis-equivalent of [njayp/ophis#6](https://github.com/njayp/ophis/issues/6), which only partially shipped as PR #7's always-append `cmd.Example`).
+
 ## [0.1.0] - 2026-05-13
 
 Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers, inspired by [njayp/ophis](https://github.com/njayp/ophis).

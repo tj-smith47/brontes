@@ -29,6 +29,43 @@ use crate::annotations::ToolAnnotations;
 use crate::schema::SchemaType;
 use crate::selector::Selector;
 
+/// Which clap field provides the primary text for an MCP tool description.
+///
+/// Resolution always falls back to the other field if the preferred one is
+/// unset; if both are absent, brontes substitutes
+/// `"Execute the {name} command"`.  An `after_help` "Examples:" block, when
+/// present, is appended to whichever mode produced the primary text.
+///
+/// # Defaults
+///
+/// [`DescriptionMode::Long`] preserves brontes' historical behavior:
+/// `long_about` is preferred, with `about` as the fallback.  Switch to
+/// [`DescriptionMode::Short`] when MCP tool descriptions are dominated by
+/// verbose `long_about` text that wastes the LLM's context budget.
+///
+/// # Surgical override
+///
+/// For one-off commands whose default-mode output is wrong, prefer
+/// [`Config::description_mode_for`] or [`Config::description`] over
+/// flipping the global default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DescriptionMode {
+    /// Prefer `cmd.about`, fall back to `cmd.long_about`.
+    ///
+    /// Best for token efficiency when most commands' `long_about` text
+    /// duplicates or trivially expands `about`.
+    Short,
+
+    /// Prefer `cmd.long_about`, fall back to `cmd.about`.  Default.
+    ///
+    /// Best when `long_about` carries information the LLM benefits from
+    /// (usage caveats, prerequisites) that wouldn't fit in the short
+    /// `about` line.
+    #[default]
+    Long,
+}
+
 /// User-facing configuration for the `mcp` subtree.
 ///
 /// Held alongside the user's [`clap::Command`] tree; consumed by
@@ -127,6 +164,27 @@ pub struct Config {
     /// `None` uses [`rmcp::model::Implementation::default()`], which derives
     /// values from `CARGO_PKG_NAME` / `CARGO_PKG_VERSION` at build time.
     pub implementation: Option<rmcp::model::Implementation>,
+
+    /// Global default for which clap field becomes the MCP tool description.
+    ///
+    /// Defaults to [`DescriptionMode::Long`].  Override per-command via
+    /// [`Config::description_mode_for`], or replace the entire description
+    /// for a specific command via [`Config::description`].
+    pub description_mode: DescriptionMode,
+
+    /// Per-command [`DescriptionMode`] overrides, keyed by full command path.
+    ///
+    /// Entries here win over [`Config::description_mode`].  A
+    /// [`Config::description`] entry for the same path wins over this map.
+    pub description_modes: HashMap<String, DescriptionMode>,
+
+    /// Per-command full-description overrides, keyed by full command path.
+    ///
+    /// When set, the stored text replaces the entire MCP tool description —
+    /// the `long_about`/`about`/`after_help` cascade is bypassed for that
+    /// command.  Use this to surface LLM-specific guidance that doesn't
+    /// belong in the CLI's `--help` output.
+    pub descriptions: HashMap<String, String>,
 }
 
 impl Config {
@@ -332,6 +390,92 @@ impl Config {
     #[must_use]
     pub fn implementation(mut self, imp: rmcp::model::Implementation) -> Self {
         self.implementation = Some(imp);
+        self
+    }
+
+    /// Set the global default [`DescriptionMode`] for MCP tool descriptions.
+    ///
+    /// Defaults to [`DescriptionMode::Long`], which preserves brontes'
+    /// historical "prefer `long_about`, fall back to `about`" behavior.
+    /// Flip to [`DescriptionMode::Short`] when verbose `long_about` text
+    /// dominates your tool surface and wastes the LLM's context budget.
+    ///
+    /// Per-command overrides via [`Config::description_mode_for`] and
+    /// full-text overrides via [`Config::description`] both win over this
+    /// global setting.
+    ///
+    /// ```rust
+    /// use brontes::{Config, DescriptionMode};
+    ///
+    /// let cfg = Config::default().description_mode(DescriptionMode::Short);
+    /// assert_eq!(cfg.description_mode, DescriptionMode::Short);
+    /// ```
+    #[must_use]
+    pub const fn description_mode(mut self, mode: DescriptionMode) -> Self {
+        self.description_mode = mode;
+        self
+    }
+
+    /// Override [`DescriptionMode`] for a specific command path.
+    ///
+    /// `cmd_path` is the full space-joined command path (e.g.,
+    /// `"my-cli module list"`).  When set, this entry wins over
+    /// [`Config::description_mode`] for that one command.  A
+    /// [`Config::description`] entry for the same path wins over this.
+    ///
+    /// ```rust
+    /// use brontes::{Config, DescriptionMode};
+    ///
+    /// let cfg = Config::default()
+    ///     .description_mode_for("my-cli module list", DescriptionMode::Short);
+    /// assert_eq!(
+    ///     cfg.description_modes.get("my-cli module list"),
+    ///     Some(&DescriptionMode::Short),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn description_mode_for(
+        mut self,
+        cmd_path: impl Into<String>,
+        mode: DescriptionMode,
+    ) -> Self {
+        self.description_modes.insert(cmd_path.into(), mode);
+        self
+    }
+
+    /// Replace the entire MCP tool description for a specific command path.
+    ///
+    /// `cmd_path` is the full space-joined command path; `text` is the literal
+    /// description string sent to MCP clients.  When set, the stored text
+    /// bypasses the `long_about`/`about`/`after_help` cascade entirely for
+    /// that command — useful for surfacing LLM-specific guidance (preconditions,
+    /// "always pair with --dry-run", etc.) that doesn't belong in the CLI's
+    /// human-facing `--help` output.
+    ///
+    /// Wins over both [`Config::description_mode`] and
+    /// [`Config::description_mode_for`].
+    ///
+    /// Empty / whitespace-only `text` is rejected at
+    /// [`crate::generate_tools`] time as [`crate::Error::Config`] — an empty
+    /// description is useless for LLM tool selection.
+    ///
+    /// `text` is stored verbatim — caller is responsible for trimming. The
+    /// native cascade applies `trim_end` to the `after_help` "Examples:" block,
+    /// but the literal override passes whitespace through as-given so callers
+    /// retain full control over the exact bytes sent to MCP clients.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().description(
+    ///     "my-cli apply",
+    ///     "Apply config changes. Always run with --dry-run first to preview drift.",
+    /// );
+    /// assert!(cfg.descriptions.contains_key("my-cli apply"));
+    /// ```
+    #[must_use]
+    pub fn description(mut self, cmd_path: impl Into<String>, text: impl Into<String>) -> Self {
+        self.descriptions.insert(cmd_path.into(), text.into());
         self
     }
 }

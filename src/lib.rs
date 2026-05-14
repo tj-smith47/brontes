@@ -47,7 +47,8 @@
 //!   the generated tool list over stdio (`mcp start`) or streamable HTTP
 //!   (`mcp stream --host <addr> --port <num>`).
 //! - [`Config`] — selectors, annotations, per-flag schema overrides,
-//!   default environment variables, server identity overrides.
+//!   default environment variables, server identity overrides, per-command
+//!   description mode and full-text override.
 //! - [`Selector`], [`Middleware`] — first-match-wins routing rules and
 //!   an async middleware boundary for wrapping tool execution.
 //!
@@ -76,7 +77,7 @@ mod walk;
 
 pub use annotations::ToolAnnotations;
 pub use command::{command, generate_tools, handle, run};
-pub use config::Config;
+pub use config::{Config, DescriptionMode};
 pub use error::{Error, Result};
 pub use schema::SchemaType;
 pub use selector::{

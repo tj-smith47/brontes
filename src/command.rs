@@ -82,6 +82,9 @@ pub struct ResolvedTool {
 /// - [`Config::deprecated_commands`] entries
 /// - [`Config::flag_schemas`] and [`Config::flag_type_overrides`] keys
 ///   (both the `cmd_path` component AND the flag name on that command)
+/// - [`Config::descriptions`] keys (additionally, the override text must be
+///   non-empty after `trim` — an empty description is rejected outright)
+/// - [`Config::description_modes`] keys
 /// - String args captured by the built-in selector factories
 ///   ([`crate::selectors::allow_cmds`] and friends)
 ///
@@ -105,7 +108,8 @@ pub struct ResolvedTool {
 ///
 /// Returns [`crate::Error::Config`] if any path-keyed [`Config`] entry
 /// references a command path or flag name that does not exist in the walked
-/// tree, or if an introspectable selector factory captured an unknown path.
+/// tree, if a [`Config::descriptions`] entry holds empty/whitespace-only
+/// text, or if an introspectable selector factory captured an unknown path.
 pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
     Ok(generate_tools_with_middleware(root, cfg)?
         .into_iter()
@@ -194,7 +198,7 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
             inherited_flag,
         );
         let output_schema = crate::schema::build_output_schema();
-        let description = crate::schema::build_description(entry.cmd);
+        let description = crate::schema::build_description(entry.cmd, cfg, &entry.path);
 
         let annotations = cfg
             .annotations
@@ -276,6 +280,32 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
     // flag_type_overrides: same validation.
     for (path, flag) in cfg.flag_type_overrides.keys() {
         validate_flag_path(resolved, &valid_paths, path, flag, "flag_type_overrides")?;
+    }
+
+    // descriptions: path must exist AND the override text must be non-empty
+    // after trim. An empty description is poor for LLM tool selection, so
+    // reject it at build time rather than silently shipping it.
+    for (path, text) in &cfg.descriptions {
+        if !valid_paths.contains(path.as_str()) {
+            return Err(crate::Error::Config(format!(
+                "Config.descriptions references unknown command path {path:?}"
+            )));
+        }
+        if text.trim().is_empty() {
+            return Err(crate::Error::Config(format!(
+                "description override for command path '{path}' is empty; \
+                 description text must be non-empty"
+            )));
+        }
+    }
+
+    // description_modes: path must exist.
+    for path in cfg.description_modes.keys() {
+        if !valid_paths.contains(path.as_str()) {
+            return Err(crate::Error::Config(format!(
+                "Config.description_modes references unknown command path {path:?}"
+            )));
+        }
     }
 
     // Selector factory captured strings (only introspectable matchers).
@@ -630,6 +660,74 @@ mod tests {
             serde_json::json!({"type": "integer"}),
         );
         assert!(validate_paths(&resolved, &cfg).is_ok());
+    }
+
+    // ── descriptions / description_modes validation ───────────────────────────
+
+    #[test]
+    fn validate_paths_rejects_unknown_description_path() {
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default().description("nonexistent path", "some text");
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("descriptions")),
+            "expected Config error for unknown description path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_empty_description_text() {
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        // Path exists, but description text is empty — must be rejected so
+        // MCP clients never see a tool with an empty description.
+        let cfg = Config::default().description("myapp list", "");
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("is empty")),
+            "expected Config error for empty description, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_whitespace_only_description_text() {
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        // Whitespace-only text trims to empty — same rejection.
+        let cfg = Config::default().description("myapp list", "   \n\t ");
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("is empty")),
+            "expected Config error for whitespace-only description, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_unknown_description_mode_path() {
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg = Config::default()
+            .description_mode_for("nonexistent path", crate::config::DescriptionMode::Short);
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("description_modes")),
+            "expected Config error for unknown description_mode path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn description_with_empty_cmd_path_validation_error() {
+        // `Config::description("", "x")` on a tree where "" doesn't bind to
+        // any command must surface as Error::Config from generate_tools'
+        // path-validation pass.
+        let root = root_with_list();
+        let cfg = Config::default().description("", "x");
+        let result = generate_tools(&root, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("descriptions")),
+            "expected Config error for empty command-path description, got {result:?}"
+        );
     }
 
     // ── global flag validation ────────────────────────────────────────────────
