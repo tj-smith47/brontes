@@ -18,6 +18,7 @@ exclude = [
     ".github/",
     ".claude/",
     ".cargo/",
+    "scripts/",
     ".gitignore",
     ".anodizer.yaml",
     "Taskfile.yml",
