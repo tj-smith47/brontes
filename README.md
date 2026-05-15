@@ -150,26 +150,24 @@ rewrites the file.
 
 Backups are **only** written when an existing file is mutated — first writes don't litter `.backup.json` files. See [SECURITY.md](SECURITY.md) for the editor-config threat surface.
 
-## How brontes compares
+## Features
 
-| Feature | brontes (Rust) | [ophis](https://github.com/njayp/ophis) (Go) |
-|---|---|---|
-| CLI framework | clap | cobra |
-| Stdio MCP server | yes | yes |
-| Streamable HTTP MCP | yes (rmcp 1.6) | yes ([#15](https://github.com/njayp/ophis/pull/15)) |
-| Editor managers: Claude / Cursor / VSCode / Zed | all four (Zed preserves unrelated `settings.json` keys + accepts JSONC on load) | Claude / Cursor / VSCode shipped; Zed pending [#46](https://github.com/njayp/ophis/pull/46) |
-| Middleware (async wrap) | yes | yes ([#34](https://github.com/njayp/ophis/pull/34)) |
-| Default env injection | `Config::default_env` | `DefaultEnv` ([#44](https://github.com/njayp/ophis/pull/44)) |
-| Tool name prefix | `Config::tool_name_prefix` | yes ([#37](https://github.com/njayp/ophis/pull/37)) |
-| Configurable MCP group name | `Config::command_name` | yes ([#40](https://github.com/njayp/ophis/pull/40)) |
-| Per-flag JSON Schema override | `Config::flag_schema` | no |
-| Per-flag type override | `Config::flag_type_override` | partial — base JSON Schema added ([#32](https://github.com/njayp/ophis/pull/32)) |
-| Per-command annotations (read-only / destructive) | `Config::annotation` (path-keyed) | via cobra annotations ([#38](https://github.com/njayp/ophis/pull/38)) |
-| `Example` / `after_help` appended to description | via clap's `after_help` | via `cmd.Example` ([#7](https://github.com/njayp/ophis/pull/7)) |
-| **Per-command description override** | `Config::description(path, text)` | no |
-| **Per-command description mode toggle** | `Config::description_mode_for` | no |
-| Deprecation filter (hide cmds from agents) | `Config::deprecate` | no |
-| Default description fallback | `"Execute the {name} command"` | no (empty if no Long/Short) |
+- **Stdio MCP server** — `mcp start` runs an stdio server fronting your clap CLI; the launch transport every editor manager wires up.
+- **Streamable HTTP MCP server** — `mcp stream` exposes the same tool list over HTTP via rmcp 1.6; loopback-only by default, widen with `--allow-host`.
+- **Editor managers** for Claude Desktop, Cursor, VSCode, and Zed — each with `enable` / `disable` / `list` leaves, `--workspace` per-project mode where applicable, and snapshot-before-write backups. Zed preserves unrelated `settings.json` keys (theme, font, keymap) and tolerates JSONC on load.
+- **Async middleware** — `Middleware` wraps tool execution for auth, audit logging, rate limiting, or distributed tracing without forking the runtime.
+- **Default env injection** — `Config::default_env(key, val)` ships env vars with every tool launch; per-call `env` from the MCP client wins on key conflict.
+- **Tool-name prefix** — `Config::tool_name_prefix` replaces the root command name in every generated tool name, avoiding cross-CLI collisions on the same MCP client.
+- **Configurable MCP group name** — `Config::command_name` renames the `mcp` subtree if your CLI already has an `mcp` subcommand.
+- **Per-flag JSON Schema override** — `Config::flag_schema(cmd_path, flag, schema)` swaps the auto-derived schema for one flag wholesale.
+- **Per-flag type override** — `Config::flag_type_override` gives a coarse type hint when a flag's `value_parser` is opaque to type-ID introspection.
+- **Per-command annotations** — read-only / destructive / idempotent / open-world hints via `Config::annotation(path, ToolAnnotations)`.
+- **`Examples:` from `after_help`** — clap's `after_help` block is appended to the MCP tool description, so `--help` examples reach LLM clients unchanged.
+- **Per-command description override** — `Config::description(path, text)` replaces the entire description with LLM-targeted prompt text, bypassing the `long_about` / `about` / `after_help` cascade.
+- **Per-command description-mode toggle** — `Config::description_mode_for(path, mode)` overrides the global `Short` / `Long` default on a single command.
+- **Deprecation filter** — `Config::deprecate(path)` hides commands from agents while keeping them visible to humans on the CLI.
+- **Default description fallback** — every tool gets a sensible `"Execute the {name} command"` description when clap's `about` / `long_about` are both absent, so the MCP tool list is never silently empty-descriptioned.
+- **MCP `Implementation` identity** — `Config::implementation` sets the server name/version surfaced to MCP clients and the MCP registry; falls through to `CARGO_PKG_*` if unset.
 
 ## Advanced
 
