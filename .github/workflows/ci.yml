@@ -132,7 +132,8 @@ jobs:
         run: bash scripts/update-coverage-badge.sh cobertura.xml
 
   # Auto-tag: on master only, after every other check passes, mint the next
-  # tag via `anodizer tag` and push it. Tag push triggers .github/workflows/release.yml.
+  # tag via `anodizer tag --push`, which atomically pushes the version-sync
+  # bump commit and the tag. Tag push triggers .github/workflows/release.yml.
   #
   # Gate semantics: anodizer tag itself decides whether to mint a tag from
   # Conventional Commits in the range (default_bump: none in .anodizer.yaml
@@ -158,20 +159,6 @@ jobs:
         uses: tj-smith47/anodizer-action@v1
         with:
           version: v0.2.0
-          args: tag
+          args: tag --push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-
-      # `anodizer tag` mints a `chore(release): bump ...` commit on top of
-      # HEAD, bumps Cargo.toml (+ Cargo.lock), tags THAT commit, and pushes
-      # the tag — but it does NOT push the bump commit itself. Without an
-      # explicit `git push origin master`, the tag points at a commit that
-      # exists only as the tag target; master HEAD on the remote stays at
-      # the pre-bump commit, future Auto-tag runs read the wrong "last
-      # commit" history, and (depending on token semantics) release.yml may
-      # fail to checkout the tag target's tree at all. Mirrors the
-      # safeguard cfgd's workflow comment (`cfgd/.github/workflows/ci.yml`)
-      # introduced for the same reason. `|| true` so a no-op tag run (only
-      # chore/docs/test commits since last release) does not fail the job.
-      - name: Push version-sync commit to master
-        run: git push origin master || true
