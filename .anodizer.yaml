@@ -110,6 +110,35 @@ source:
     - "CHANGELOG.md"
     - "CONTRIBUTING.md"
 
+# Source SBOM — brontes ships no binary, so the only artifact to catalog is
+# the source tarball above. `artifacts: source` directs syft at the source
+# archive (not the absent build outputs). Gives downstream consumers a
+# CycloneDX bill of materials for the exact dependency closure the .crate
+# was cut from, attached to the GitHub release alongside the tarball.
+sboms:
+  - id: source
+    artifacts: source
+    documents:
+      - "{{ .ArtifactName }}.cdx.json"
+
+# Signing — cosign keyless (Sigstore/Fulcio OIDC) signs the source tarball
+# and its SBOM. Keyless reuses the `id-token: write` permission the release
+# workflow already grants for MCP; no GPG/cosign key secret is required, so
+# this adds no new provisioning. `if: not IsSnapshot` keeps local snapshot
+# and `check config` runs from invoking cosign (which needs the GHA OIDC
+# token only present in the release job).
+signs:
+  - id: source
+    artifacts: archive
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature"
+      - "{{ Signature }}"
+      - "{{ Artifact }}"
+    if: "{{ not IsSnapshot }}"
+
 # Crates.io publisher — CARGO_REGISTRY_TOKEN provides auth. 600s index
 # timeout matches cfgd's setting to absorb sporadic crates.io 503s.
 defaults:
@@ -139,21 +168,68 @@ crates:
       footer: |
         ---
         Released with [anodizer](https://github.com/tj-smith47/anodizer) 🦀
+    # crates.io is the ONLY artifact registry brontes ships to: it is a
+    # library, so the published .crate tarball is the entire deliverable.
+    # Presence under `publish:` opts the crate in; `index_timeout` is
+    # inherited from `defaults.publish.cargo`. `--locked` pins the exact
+    # Cargo.lock the CI build resolved so a transient registry shift can't
+    # swap a dependency between verify and publish; `--all-features` keeps
+    # the pre-publish verification build identical to what docs.rs renders
+    # (`[package.metadata.docs.rs] all-features = true`).
+    publish:
+      cargo:
+        locked: true
+        all_features: true
+
+# ───────────────────────────────────────────────────────────────────────
+# MCP registry publisher
+# ───────────────────────────────────────────────────────────────────────
+#
+# brontes IS a clap→MCP toolkit, so the MCP registry is its apt publisher.
+# But brontes itself is a *library* — it produces no downloadable, runnable
+# server artifact (no binary, no image, no .mcpb bundle). The MCP registry's
+# package taxonomy (oci / npm / pypi / nuget / mcpb) has no "cargo crate"
+# entry, because you cannot `mcp install` a library; you build it into your
+# own binary first. So this block is wired in full to exercise every
+# McpConfig field under single-crate (`path: .`) resolution, but is
+# `skip`-gated: it never registers, because there is no brontes-the-server
+# to register. Downstream consumers (anodizer, cfgd, any clap CLI mounting
+# `brontes::command`) drop the `skip:` and point `packages[].identifier` at
+# the binary/image THEY ship. `auth: github-oidc` reuses the
+# `id-token: write` permission the release workflow already grants.
+mcp:
+  name: io.github.tj-smith47/brontes
+  title: "Brontes"
+  description: "Transform any clap CLI into an MCP server"
+  homepage: "https://github.com/tj-smith47/brontes"
+  # A library has no installable server artifact; gate the publisher off so
+  # `check config` exercises the field surface without a false registration.
+  skip: true
+  repository:
+    url: "https://github.com/tj-smith47/brontes"
+    source: github
+  # `oci` is the package type a brontes-powered server would most commonly
+  # ship as; the identifier a real consumer sets points at THEIR image.
+  packages:
+    - registry_type: oci
+      identifier: "ghcr.io/tj-smith47/brontes:{{ .Version }}"
+      transport:
+        type: stdio
+  auth:
+    type: github-oidc
 
 # ───────────────────────────────────────────────────────────────────────
 # EXAMPLE — `mcp:` block for a brontes-powered MCP server release
 # ───────────────────────────────────────────────────────────────────────
 #
-# Brontes itself is a library, not a runnable MCP server, so it does not
-# register on the MCP registry. The block below is commented out for that
-# reason — but is left in place as a worked example for downstream
-# consumers (anodizer, cfgd, any clap CLI that mounts `brontes::command`)
-# who DO publish a runnable server and want anodizer to register it.
+# The active `mcp:` block above is brontes' own (skip-gated) registration.
+# The commented worked example below stays as copy-paste scaffolding for a
+# downstream consumer (anodizer, cfgd, any clap CLI that mounts
+# `brontes::command`) who DOES publish a runnable server. The README points
+# consumers at this block via the "Releasing an MCP server" section.
 #
 # Uncomment, replace `your-mcp-server-name` with your reverse-DNS name,
-# and edit the `packages[]` block to match how your server ships. The
-# README points consumers at this block via the "Releasing an MCP server"
-# section.
+# and edit the `packages[]` block to match how your server ships.
 #
 # Schema reference: anodizer's `crates/core/src/config/mcp.rs` (McpConfig).
 # Docs: https://tj-smith47.github.io/anodizer/docs/publish/mcp-registry/
