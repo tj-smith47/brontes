@@ -15,6 +15,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  ANODIZER_VERSION: v0.11.3
 
 jobs:
   release:
@@ -37,7 +38,7 @@ jobs:
       - name: Run anodizer release
         uses: tj-smith47/anodizer-action@v1
         with:
-          version: v0.9.1
+          version: ${{ env.ANODIZER_VERSION }}
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
