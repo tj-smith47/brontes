@@ -32,14 +32,12 @@ jobs:
         with:
           key: release
 
-      # Brontes is library-only — no binary builds, no per-OS matrix, no
-      # archives/signs/docker. The full release pipeline (changelog → source
-      # tarball → GH release → cargo publish) runs in one job.
       - name: Run anodizer release
         uses: tj-smith47/anodizer-action@v1
         with:
           version: ${{ env.ANODIZER_VERSION }}
           args: release --clean
+          auto-install: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
