@@ -139,6 +139,15 @@ signs:
       - "{{ Artifact }}"
     if: "{{ not IsSnapshot }}"
 
+# Attestations — dogfood anodizer's emit-attestations feature. `emit` mode
+# writes a self-contained in-toto SLSA-provenance v1 statement over the
+# source tarball and its SBOM, attached to the GitHub release. Keyless like
+# signs:, so it needs no new secret.
+attestations:
+  enabled: true
+  mode: emit
+  artifacts: [source, sbom]
+
 # Crates.io publisher — CARGO_REGISTRY_TOKEN provides auth. 600s index
 # timeout matches cfgd's setting to absorb sporadic crates.io 503s.
 defaults:
