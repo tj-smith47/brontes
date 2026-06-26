@@ -17,7 +17,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  ANODIZER_VERSION: v0.11.3
+  ANODIZER_VERSION: v0.12.2
 
 jobs:
   fmt:
