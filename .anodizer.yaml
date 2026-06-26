@@ -56,7 +56,7 @@ before:
     - cargo test
 
 changelog:
-  use: github-native
+  use: git
   title: "Changelog"
   header: "# Changelog for {{ ProjectName }}"
   divider: "---"
@@ -100,15 +100,10 @@ source:
   format: tar.gz
   name_template: "{{ ProjectName }}-{{ Version }}-source"
   prefix_template: "{{ ProjectName }}-{{ Version }}/"
-  files:
-    - "src/**/*.rs"
-    - "tests/**/*.rs"
-    - "Cargo.toml"
-    - "Cargo.lock"
-    - "LICENSE"
-    - "README.md"
-    - "CHANGELOG.md"
-    - "CONTRIBUTING.md"
+  # No `files:` — anodizer's source stage runs `git archive`, which already
+  # captures every tracked file. Listing them here only ADDS duplicate tar
+  # entries on top of the archive. List paths here solely to bundle UNtracked
+  # extras (a generated man page, a build-time artifact); brontes has none.
 
 # Source SBOM — brontes ships no binary, so the only artifact to catalog is
 # the source tarball above. `artifacts: source` directs syft at the source
@@ -129,7 +124,7 @@ sboms:
 # token only present in the release job).
 signs:
   - id: source
-    artifacts: archive
+    artifacts: source
     cmd: cosign
     args:
       - sign-blob
@@ -154,10 +149,20 @@ defaults:
   publish:
     cargo:
       index_timeout: 600
+      # A crates.io publish is a one-way door — never yank a version that
+      # landed just because a LATER publisher in the run failed.
+      retain_on_rollback: true
 
-# Single-crate library. `release.github.owner/name` is required by the
-# `changelog: use=github-native` stage so anodizer's auto-release-notes
-# API call knows which repository to query for the commit range.
+# On any failure, HOLD: leave the tag and partial release in place for a human
+# to inspect, rather than reverting. release.yml is tag-triggered with no bump
+# commit to undo, so a rollback's only action would be pushing a revert to
+# protected master — which cannot roll back the already-pushed tag and risks a
+# branch-protection/scope rejection that re-poisons the run.
+release:
+  on_failure: hold
+
+# Single-crate library. `release.github.owner/name` pins the repository the
+# changelog stage queries for the commit range.
 crates:
   - name: brontes
     path: .
@@ -171,6 +176,11 @@ crates:
       make_latest: auto
       mode: keep-existing
       target_commitish: "{{ .Commit }}"
+      # A re-cut of the same tag must adopt the prior attempt's draft/assets
+      # instead of bailing on "asset already exists"; otherwise a single failed
+      # publish wedges every subsequent run on the same version.
+      replace_existing_draft: true
+      replace_existing_artifacts: true
       name_template: "{{ ProjectName }} {{ Tag }}"
       header: |
         ## What's new in {{ .Tag }}
