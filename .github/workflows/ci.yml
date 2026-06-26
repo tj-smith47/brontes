@@ -149,8 +149,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # GH_PAT (not GITHUB_TOKEN) so the tag push triggers release.yml.
-          # GITHUB_TOKEN-authored pushes don't trigger downstream workflows.
           token: ${{ secrets.GH_PAT }}
       - name: Configure git identity
         run: |
