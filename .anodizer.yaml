@@ -167,6 +167,16 @@ crates:
   - name: brontes
     path: .
     tag_template: "v{{ Version }}"
+    # Single-crate tag→manifest sync. Without this opt-in, `anodizer tag` cuts
+    # the tag but leaves `[package].version` untouched, so cargo publish ships
+    # the OLD version (already-immutable on crates.io) and the run fails the
+    # content-vs-version skip-guard. `mode: tag` derives the version from the
+    # computed tag and rewrites Cargo.toml in the bump commit the tag points at.
+    # Requires the auto-tag step to pass `--crate brontes` (see ci.yml) so the
+    # single-crate version-sync path is taken.
+    version_sync:
+      enabled: true
+      mode: tag
     release:
       github:
         owner: tj-smith47

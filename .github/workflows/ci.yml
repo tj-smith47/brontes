@@ -158,6 +158,6 @@ jobs:
         uses: tj-smith47/anodizer-action@v1
         with:
           version: ${{ env.ANODIZER_VERSION }}
-          args: tag --push
+          args: tag --push --crate brontes
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
