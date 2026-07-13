@@ -143,8 +143,9 @@ attestations:
   mode: emit
   artifacts: [source, sbom]
 
-# Crates.io publisher — CARGO_REGISTRY_TOKEN provides auth. 600s index
-# timeout matches cfgd's setting to absorb sporadic crates.io 503s.
+# Crates.io publisher — auth is crates.io Trusted Publishing (OIDC); see the
+# `auth: oidc` note below. 600s index timeout matches cfgd's setting to absorb
+# sporadic crates.io 503s.
 defaults:
   publish:
     cargo:
