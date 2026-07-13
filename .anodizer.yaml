@@ -149,6 +149,14 @@ defaults:
   publish:
     cargo:
       index_timeout: 600
+      # crates.io Trusted Publishing: `oidc` mints a short-lived crates.io
+      # token from the release job's GitHub Actions id-token — no stored
+      # CARGO_REGISTRY_TOKEN. It never falls back to a token, so a missing or
+      # unregistered Trusted Publisher fails the release LOUDLY instead of
+      # silently. Requires (a) the release job to grant `id-token: write` (see
+      # release.yml) and (b) the crates.io Trusted-Publisher config registered
+      # for this repo/workflow BEFORE the next release tag is cut.
+      auth: oidc
       # A crates.io publish is a one-way door — never yank a version that
       # landed just because a LATER publisher in the run failed.
       retain_on_rollback: true

@@ -6,29 +6,32 @@ on:
   pull_request:
     branches: [master]
 
-# Workflow-level write permission so the `coverage` job can push the
-# shields-endpoint JSON to the orphan `badges` branch, and the `tag` job
-# can push the auto-tag back to master. PR events from forks override
-# this with their own restricted token, so granting write here does not
-# widen attack surface from fork PRs.
+# Read-only at the workflow level; the two writing jobs (`coverage`, `tag`)
+# elevate to `contents: write` per-job. PR events from forks override the
+# token with their own restricted one, so no fork PR gains write.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  ANODIZER_VERSION: v0.12.2
+  ANODIZER_VERSION: v0.18.0
 
 jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all -- --check
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
   clippy:
     name: clippy (${{ matrix.os }})
@@ -38,12 +41,19 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -53,61 +63,93 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-  # Linux-only: single-toolchain check, no OS-gated code paths under MSRV.
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --all-features
+
   msrv:
     name: msrv check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Linux-only: single-toolchain check, no OS-gated code paths under MSRV.
       - name: Read MSRV from Cargo.toml
         id: msrv
         run: |
           msrv=$(grep -E '^rust-version' Cargo.toml | head -1 | cut -d'"' -f2)
           echo "version=$msrv" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
+
+      - name: Set up MSRV toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
 
-  # Linux-only: rustdoc emits HTML, output is OS-independent.
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check against MSRV
+        run: cargo check --all-features
+
   docs:
     name: rustdoc
     runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps --all-features
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-  # Linux-only: reads Cargo.lock, OS-independent advisory check.
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Linux-only: rustdoc emits HTML, output is OS-independent.
+      - name: Build docs
+        run: cargo doc --no-deps --all-features
+
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - run: cargo audit
 
-  # Linux-only: reads deny.toml + Cargo.lock, OS-independent policy check.
+      # Linux-only: reads Cargo.lock, OS-independent advisory check.
+      - name: Run cargo audit
+        run: cargo audit
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
-      - run: cargo deny check
+
+      # Linux-only: reads deny.toml + Cargo.lock, OS-independent policy check.
+      - name: Run cargo deny
+        run: cargo deny check
 
   # Coverage: master-only — runs cargo-llvm-cov, emits Cobertura XML, then
   # scripts/update-coverage-badge.sh extracts the line-rate and pushes a
@@ -117,24 +159,38 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: write  # push shields-endpoint JSON to the `badges` branch
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
           key: ci-coverage
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+
       - name: Run tests with coverage
         run: cargo llvm-cov --cobertura --output-path cobertura.xml
+
       - name: Update coverage badge
         run: bash scripts/update-coverage-badge.sh cobertura.xml
 
   # Auto-tag: on master only, after every other check passes, mint the next
-  # tag via `anodizer tag --push`, which atomically pushes the version-sync
-  # bump commit and the tag. Tag push triggers .github/workflows/release.yml.
+  # tag via `anodizer tag --push-tags-only`, which pushes ONLY the tag —
+  # pointing at the local version-sync bump commit — and leaves master where
+  # it was. The tag push triggers .github/workflows/release.yml; that
+  # workflow's `advance-master` job fast-forwards master onto the bump commit
+  # ONLY after cargo publish succeeds, so a failed publish never advances the
+  # branch (deferred-branch push pattern; matches anodizer's advance-master).
   #
   # Gate semantics: anodizer tag itself decides whether to mint a tag from
   # Conventional Commits in the range (default_bump: none in .anodizer.yaml
@@ -145,19 +201,24 @@ jobs:
     if: github.ref == 'refs/heads/master'
     needs: [fmt, clippy, test, msrv, docs, audit, deny]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # push the auto-tag (GH_PAT, so release.yml triggers)
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT }}
+
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Run anodizer tag
         uses: tj-smith47/anodizer-action@v1
         with:
           version: ${{ env.ANODIZER_VERSION }}
-          args: tag --push --crate brontes
+          args: tag --push-tags-only --crate brontes
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

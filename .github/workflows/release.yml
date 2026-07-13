@@ -5,9 +5,9 @@ on:
     tags:
       - "v*"
 
+# Read-only at the workflow level; each job elevates to exactly what it writes.
 permissions:
-  contents: write       # GH release creation
-  id-token: write       # github-oidc for MCP registry (when un-skipped)
+  contents: read
 
 concurrency:
   group: release
@@ -15,23 +15,36 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  ANODIZER_VERSION: v0.12.2
+  ANODIZER_VERSION: v0.18.0
 
 jobs:
   release:
     name: Publish Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # GH release creation
+      id-token: write  # crates.io Trusted Publishing (OIDC) + MCP registry
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0  # tag history + previous-tag lookup for changelog
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
           key: release
 
+      # `publish.cargo.auth: oidc` in .anodizer.yaml mints a short-lived
+      # crates.io token from this job's GitHub Actions id-token (Trusted
+      # Publishing) — the `id-token: write` grant above is what makes that
+      # token ambient. CARGO_REGISTRY_TOKEN is no longer consulted under oidc;
+      # it stays wired only as a manual fallback lever (temporarily switch
+      # auth back to `token`) until the secret is dropped after the first TP
+      # publish succeeds.
       - name: Run anodizer release
         uses: tj-smith47/anodizer-action@v1
         with:
@@ -41,3 +54,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Deferred-branch push: the tag was pushed alone (ci.yml `tag --push-tags-only`)
+  # pointing at the local version-sync bump commit, leaving master unmoved.
+  # Advance master onto that bump commit ONLY after the publish succeeds, so a
+  # failed release never advances the branch (matches anodizer's advance-master).
+  # `github.sha` on a tag-push is the commit the tag references = the bump commit;
+  # `force=false` makes the GitHub API reject anything but a fast-forward, so the
+  # branch moves only when master is a strict ancestor of the bump commit.
+  advance-master:
+    name: Advance master
+    needs: [release]
+    if: ${{ needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write  # fast-forward the master ref onto the bump commit
+    steps:
+      - name: Fast-forward master onto the published bump commit
+        env:
+          # GH_PAT (not GITHUB_TOKEN): moving brontes' protected master ref
+          # requires the same credential the tag push uses in ci.yml.
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ! gh api -X PATCH "repos/${{ github.repository }}/git/refs/heads/master" \
+                 -f sha="$SHA" -F force=false; then
+            echo "::error::Could not fast-forward master to $SHA (master moved during release?). \
+              The version IS published — do NOT re-cut. Reconcile by hand: \
+              git fetch origin && git push origin $SHA:refs/heads/master"
+            exit 1
+          fi
