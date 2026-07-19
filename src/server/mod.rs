@@ -41,8 +41,8 @@ use crate::tool::{ToolInput, ToolOutput};
 ///
 /// Tool listing is computed once at construction time and cached: every
 /// `tools/list` and `tools/call` request consults the cached
-/// [`Vec<Tool>`](rmcp::model::Tool). For v0.1.0 the [`Config`] is immutable
-/// after server construction, so the cache cannot go stale; a future
+/// [`Vec<Tool>`](rmcp::model::Tool). The [`Config`] is immutable after
+/// server construction, so the cache cannot go stale; a future
 /// hot-reload feature would need to invalidate it.
 ///
 /// Marked `#[doc(hidden)]` because consumers are expected to drive the

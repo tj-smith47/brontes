@@ -7,7 +7,7 @@
 //! tool list. Also asserts that calling an unknown tool errors cleanly,
 //! and that cancellation tears down both halves without a panic.
 //!
-//! This is the v0.1.0 acceptance gate for Task #1: a consumer's clap tree
+//! This is the end-to-end acceptance gate: a consumer's clap tree
 //! becomes a working MCP server. Subprocess `call_tool` execution is
 //! covered by the unit tests in `src/exec.rs`; this file proves the
 //! protocol wire-up against the actual `BrontesServer`.

@@ -434,7 +434,7 @@ fn enable_rejects_malformed_env_flag() {
 
 /// Asserts that a single `enable` flow writes both the current-exe path as
 /// `command` AND the supplied `--env` key/value pairs into the same server
-/// entry (spec check #10 / Task #4 I1).
+/// entry.
 ///
 /// `std::env::current_exe()` inside a `cargo test` run points at the test
 /// binary rather than the shipping `brontes` binary; that is expected. The

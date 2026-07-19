@@ -3,7 +3,7 @@
 #
 # Library-only release: changelog → source tarball → cargo publish. No
 # archives, signs, binaries, docker images or installer artifacts ship,
-# because brontes does not produce a runnable binary in v0.1.0. The mcp:
+# because brontes produces no runnable binary — it is a library. The mcp:
 # block is present but skipped — brontes itself is the library; consumers
 # (anodizer, cfgd) register their brontes-powered servers on the MCP
 # registry instead.

@@ -107,7 +107,7 @@ pub mod __test_internal {
     /// [`SignalSource`] and assert the two `tracing::warn!` install
     /// failure paths (`could not install SIGINT handler` /
     /// `could not install SIGTERM handler`) fire as documented. Mirrors
-    /// the pattern Task #20 established for `Acceptor`.
+    /// the `SignalSource` re-export pattern used for `Acceptor`.
     ///
     /// [`SignalSource`]: crate::subcommands::signal::SignalSource
     #[cfg(unix)]

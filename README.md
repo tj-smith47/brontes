@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://raw.githubusercontent.com/tj-smith47/brontes/master/.github/logo.svg" width="180" alt="brontes logo">
+
 # brontes
 
 A Rust library that transforms `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers.

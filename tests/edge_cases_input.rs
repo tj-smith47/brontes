@@ -10,7 +10,7 @@
 //! - **No-args leaf** — a leaf with no positionals and no user-defined flags
 //!   still has a per-tool input schema whose `flags.properties` map exists,
 //!   and is empty: clap's auto-injected `--help` is filtered from the tool
-//!   surface per the v0.1.0 contract.
+//!   surface.
 //! - **Positional-only leaf** — a leaf with one required positional surfaces
 //!   ONLY in `args.description` (as a `Usage pattern:` line). Positional
 //!   args are intentionally absent from `flags.properties` and

@@ -1,6 +1,6 @@
 //! Editor-config manager — the shared load / save / backup machinery
-//! consumed by the per-editor subcommand handlers (Claude in Task #4,
-//! Cursor in Task #5, `VSCode` in Task #6).
+//! consumed by the per-editor subcommand handlers (Claude, Cursor,
+//! `VSCode`, Zed).
 //!
 //! The shape mirrors ophis `internal/cfgmgr/manager/manager.go`:
 //!
@@ -53,7 +53,7 @@ use crate::{Error, Result};
 /// prompts on the next save.
 ///
 /// Lives in the shared `manager` module (not in `cursor.rs` / `vscode.rs`)
-/// so Task #6 reuses the same struct without duplication. The round-trip
+/// so the per-editor handlers reuse the same struct without duplication. The round-trip
 /// golden test asserts both `password: true` and `password: false` entries
 /// survive the load-mutate-write cycle.
 #[derive(Serialize, Deserialize, Clone, Debug)]

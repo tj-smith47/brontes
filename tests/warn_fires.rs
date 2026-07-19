@@ -32,7 +32,7 @@
 //!   (idle TCP client + compressed grace) →
 //!   [`http_grace_window_exceeded_emits_warn`]
 //!
-//! Uncovered (surfaced as SUGGESTs in the implementer report, not in CI):
+//! Signal-handler install-failure paths (faulty `SignalSource`):
 //!
 //! - `src/subcommands/signal.rs::spawn_signal_listener_with` SIGINT-
 //!   register failure (faulty `SignalSource`) →

@@ -1,7 +1,7 @@
 //! Golden test pinning `brontes::generate_tools` wire shape.
 //!
 //! The fixture in `tests/fixtures/generate_tools_golden.json` is the
-//! canonical v0.1.0 output for the tree built in this file. Any change to
+//! canonical output for the tree built in this file. Any change to
 //! the wire shape — input schema layout, tool description, annotation
 //! handling, naming — diffs against the fixture and fails the test.
 //!

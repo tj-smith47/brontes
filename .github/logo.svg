@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="brontes logo">
+  <title>brontes</title>
+  <defs>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#FFD23F"/>
+      <stop offset="1" stop-color="#F76B1C"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#F76B1C" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- Anvil: the smith's forge. Steel gray reads on both light and dark GitHub themes. -->
+  <g fill="#8A94A6">
+    <path d="M22 121 L40 114 L40 132 Z"/>
+    <rect x="38" y="112" width="124" height="20" rx="5"/>
+    <path d="M86 132 h28 l6 17 H80 Z"/>
+    <rect x="56" y="149" width="88" height="17" rx="5"/>
+  </g>
+
+  <!-- Thunderbolt striking the anvil — brontes (Greek: thunder), the Cyclops smith. -->
+  <path d="M122 18 L76 98 h27 l-19 66 72-94 h-31 Z" fill="url(#bolt)" filter="url(#glow)"/>
+</svg>
