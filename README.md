@@ -1,15 +1,19 @@
+<div align="center">
+
 # brontes
+
+A Rust library that transforms `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers.
 
 [![CI](https://github.com/tj-smith47/brontes/actions/workflows/ci.yml/badge.svg)](https://github.com/tj-smith47/brontes/actions/workflows/ci.yml)
 [![Release](https://github.com/tj-smith47/brontes/actions/workflows/release.yml/badge.svg)](https://github.com/tj-smith47/brontes/actions/workflows/release.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/tj-smith47/brontes/badges/coverage.json)](https://github.com/tj-smith47/brontes/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> *brontes* (Greek: thunder). In myth, the Cyclops smith who forged Zeus's thunderbolts. This crate will forge clap CLIs into MCP servers.
+</div>
 
-A Rust library for transforming `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers, inspired by [njayp/ophis](https://github.com/njayp/ophis).
+> *brontes* (Greek: thunder). In myth, the Cyclops smith who forged Zeus's thunderbolts. This crate forges clap CLIs into MCP servers.
 
-Written by [Claude](https://claude.ai) (Opus 4.6 / 4.7); maintained by us.
+Inspired by [njayp/ophis](https://github.com/njayp/ophis). Written by [Claude](https://claude.ai) (Opus 4.6 / 4.7); maintained by us.
 
 > **Status:** Beta — used in production by anodizer + cfgd; APIs stabilizing toward 1.0.
 

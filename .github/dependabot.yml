@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # Group routine version bumps into one weekly PR; Dependabot security
+    # updates bypass grouping and arrive as individual PRs regardless.
+    groups:
+      cargo:
+        patterns: ["*"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    ignore:
+      # Self-managed: the floating @v1 is moved by anodizer-action's own
+      # release (semantic-release + update-major-tag). Don't let Dependabot
+      # track it; a v2 cutover is a deliberate manual bump.
+      - dependency-name: "tj-smith47/anodizer-action"
