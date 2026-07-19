@@ -23,7 +23,7 @@ use futures::future::BoxFuture;
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, Implementation, InitializeResult,
+    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, InitializeResult,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
@@ -266,7 +266,7 @@ fn tool_error_result(name: &str, command_path: &str, e: &crate::Error) -> CallTo
     } else {
         format!("{base} (command: \"{command_path}\")")
     };
-    let mut r = CallToolResult::error(vec![Content::text(body.clone())]);
+    let mut r = CallToolResult::error(vec![ContentBlock::text(body.clone())]);
     r.structured_content = Some(serde_json::json!({
         "error": body,
         "category": brontes_error_category(e),
@@ -339,7 +339,7 @@ fn tool_output_to_result(tool_name: &str, output: &ToolOutput) -> CallToolResult
         } else {
             output.stdout.clone()
         };
-        let mut r = CallToolResult::success(vec![Content::text(body)]);
+        let mut r = CallToolResult::success(vec![ContentBlock::text(body)]);
         r.structured_content = Some(structured);
         r
     } else {
@@ -356,7 +356,7 @@ fn tool_output_to_result(tool_name: &str, output: &ToolOutput) -> CallToolResult
         if body.is_empty() {
             body = format!("tool '{tool_name}' exited with code {}", output.exit_code);
         }
-        let mut r = CallToolResult::error(vec![Content::text(body)]);
+        let mut r = CallToolResult::error(vec![ContentBlock::text(body)]);
         r.structured_content = Some(structured);
         r
     }
