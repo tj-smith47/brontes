@@ -34,7 +34,7 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "string", "wrap_help"] }
-rmcp = { version = "1.6", features = [
+rmcp = { version = "2.2", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",
@@ -83,7 +83,7 @@ tower-service = "0.3"
 [dev-dependencies]
 pretty_assertions = "1"
 tokio = { version = "1", features = ["full"] }
-rmcp = { version = "1.6", features = [
+rmcp = { version = "2.2", features = [
     "server",
     "client",
     "transport-io",
