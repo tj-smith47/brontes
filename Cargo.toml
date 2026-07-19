@@ -65,8 +65,8 @@ tempfile = "3"
 # (Claude Desktop / VSCode / Cursor under `manager/paths.rs`). The
 # documented Rust analog of Go's `os.UserHomeDir()` — used as the home
 # resolver; an unresolved home triggers the per-row fallback chain
-# documented in PLAN.md §3.1.
-dirs = "5"
+# in `manager/paths.rs`.
+dirs = "6"
 # HTTP runtime for the `mcp stream` streamable-HTTP transport. The rmcp
 # `StreamableHttpService` is `tower_service::Service<Request<Incoming>>`;
 # we wire it directly to hyper's per-connection serve loop and use

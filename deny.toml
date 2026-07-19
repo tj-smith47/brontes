@@ -21,55 +21,18 @@ confidence-threshold = 0.93
 multiple-versions = "warn"
 wildcards = "deny"
 
-# Duplicates we cannot collapse without forking an upstream crate.
-# Each entry must justify WHY the dup exists and WHY no unifying version is reachable.
-#
-# Common root cause for the redox_users-chain skips below: `dirs 5` pins
-# `dirs-sys 0.4` which pins `redox_users 0.4`, which in turn pins old
-# `thiserror`/`getrandom`/`windows-sys` majors. Bumping to `dirs 6` would
-# resolve `thiserror` and `windows-sys` but is intentionally held back
-# (see Cargo.toml comment on `dirs = "5"`); re-evaluate at next major
-# review of the directory-resolver surface.
+# Duplicates that cannot be collapsed without forking an upstream crate.
+# Each entry justifies WHY the dup exists and WHY no unifying version is
+# reachable.
 skip = [
     # `getrandom` 0.2.x vs 0.4.x
-    # 0.2: pulled in by `ring 0.17` (rustls/reqwest TLS backend) and
-    #      `redox_users 0.4` (transitive via `dirs 5` -> `dirs-sys`).
-    # 0.4: pulled in by `rand 0.10`, `tempfile 3`, `uuid 1.23` (all current).
+    # 0.2: pulled in by `ring 0.17` (the rustls TLS backend).
+    # 0.4: pulled in by `rand`, `tempfile`, `uuid` (all current).
     # No unifying version exists: `ring` ships its own crypto and its
-    # release cadence is glacial — moving to `getrandom 0.4` would require
-    # a new `ring` release we don't control.
-    # Re-evaluate when `ring >= 0.18` lands.
+    # release cadence is glacial — moving off `getrandom 0.2` needs a new
+    # `ring` release outside brontes' control. Re-evaluate when
+    # `ring >= 0.18` lands.
     { name = "getrandom", version = "0.2" },
-
-    # `wit-bindgen` 0.51 vs 0.57
-    # Both arrive solely through the `wasip2` and `wasip3` WASI adapters
-    # inside `getrandom 0.4.2`. The adapters are cfg-gated to wasm targets
-    # (`target_os = "wasi"`); on the host targets brontes actually compiles
-    # for (`x86_64`/`aarch64-{linux,darwin,windows}-*`), neither adapter
-    # is reachable. The lock graph records them anyway, which is what
-    # trips cargo-deny.
-    # Re-evaluate when brontes adds a wasm release artifact — at that
-    # point one adapter will win for the target triple and the other
-    # falls out of the graph.
-    { name = "wit-bindgen", version = "0.51" },
-
-    # `thiserror` 1.x vs 2.x (and the matching `thiserror-impl` proc-macro)
-    # 1.x: pulled in by `redox_users 0.4` (transitive via `dirs 5` ->
-    #      `dirs-sys 0.4`).
-    # 2.x: pinned directly by brontes and by `rmcp 1.6`.
-    # `redox_users 0.4` is the latest release on that line; the
-    # `thiserror 2.x` migration only ships in `redox_users 0.5+`, which
-    # requires `dirs 6`. Held by the intentional `dirs = "5"` pin above.
-    { name = "thiserror", version = "1" },
-    { name = "thiserror-impl", version = "1" },
-
-    # `windows-sys` 0.48 vs 0.61
-    # 0.48: pulled in by `dirs-sys 0.4` (transitive via `dirs 5`).
-    # 0.61: every other windows-touching crate (`clap`, `tempfile`,
-    #       `tokio`, `mio`, `rustix`, `socket2`, ...).
-    # Same root cause as thiserror above: `dirs-sys 0.5` would unify on
-    # 0.61, but that requires `dirs 6`.
-    { name = "windows-sys", version = "0.48" },
 ]
 
 [sources]
