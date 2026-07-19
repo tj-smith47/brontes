@@ -1,6 +1,6 @@
 [package]
 name = "brontes"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.94"
 description = "Transform any clap CLI into an MCP server."
