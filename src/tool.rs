@@ -88,6 +88,12 @@ pub struct ToolOutput {
     /// Process exit code. The sentinel value `-1` indicates the process was
     /// killed by signal and the OS did not yield an exit code (flattened from
     /// [`std::process::ExitStatus::code`] returning `None`).
+    // The wire description is spelled out separately because the rustdoc above
+    // carries an intra-doc link, which renders as literal brackets in JSON and
+    // means nothing to the language model reading the schema.
+    #[schemars(
+        description = "Process exit code. The sentinel value -1 means the process was killed by a signal and the OS reported no exit code."
+    )]
     pub exit_code: i32,
 }
 

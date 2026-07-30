@@ -31,7 +31,7 @@
 //! `exit_code`; the call is **not** an error from brontes's perspective —
 //! the MCP layer surfaces the failure to the client via `is_error: true`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -41,6 +41,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command as TokioCommand;
 use tokio_util::sync::CancellationToken;
 
+use crate::schema::{FlagRender, FlagSpec};
 use crate::tool::{ToolInput, ToolOutput};
 use crate::{Error, Result};
 
@@ -90,14 +91,26 @@ pub fn current_executable() -> Result<PathBuf> {
 /// configured prefix) is dropped, the remainder are the clap subcommand
 /// path. Flags are appended next, then positional args.
 ///
+/// `flag_specs` carries what the JSON value cannot express — chiefly that an
+/// `ArgAction::Count` flag renders as repetition rather than `--flag N`. A flag
+/// absent from the map falls back to value/boolean rendering inferred from its
+/// JSON type.
+///
 /// Mirrors ophis `buildCommandArgs` / `buildFlagArgs` (`execute.go:66-123`).
-pub fn build_command_args(tool_name: &str, input: &ToolInput) -> Vec<String> {
+pub fn build_command_args(
+    tool_name: &str,
+    input: &ToolInput,
+    flag_specs: &BTreeMap<String, FlagSpec>,
+) -> Vec<String> {
     // Drop the root token (the binary identifies itself; tool name encodes
     // root + subcommand path).
     let mut args: Vec<String> = tool_name.split('_').skip(1).map(str::to_string).collect();
 
     for (name, value) in &input.flags {
-        append_flag(&mut args, name, value, tool_name);
+        let render = flag_specs
+            .get(name)
+            .map_or(FlagRender::Value, |spec| spec.render);
+        append_flag(&mut args, name, value, render, tool_name);
     }
 
     for a in &input.args {
@@ -110,9 +123,20 @@ pub fn build_command_args(tool_name: &str, input: &ToolInput) -> Vec<String> {
 /// Translate one `(flag_name, JSON value)` pair into the argv tokens it
 /// produces. Mirrors ophis `parseFlagArgValue` semantics with the divergences
 /// noted on the individual helpers below.
-fn append_flag(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str) {
+fn append_flag(
+    out: &mut Vec<String>,
+    name: &str,
+    value: &Value,
+    render: FlagRender,
+    tool_name: &str,
+) {
     // Parity with ophis `execute.go:84-86`: empty key or null value → skip.
     if name.is_empty() || value.is_null() {
+        return;
+    }
+
+    if render == FlagRender::Count {
+        append_count_flag(out, name, value, tool_name);
         return;
     }
 
@@ -140,6 +164,29 @@ fn append_flag(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str
             }
         }
         _ => append_scalar_flag(out, name, value, tool_name),
+    }
+}
+
+/// Push the argv tokens for an `ArgAction::Count` flag: `--name` repeated once
+/// per unit of the integer value.
+///
+/// clap parses a `Count` arg with `num_args(0)`, so the `--name N` form the
+/// generic scalar path would emit is rejected as an unexpected argument. A
+/// non-integer or negative value is dropped with a warning rather than
+/// guessed at.
+fn append_count_flag(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str) {
+    let Some(times) = value.as_u64() else {
+        tracing::warn!(
+            target: "brontes::exec",
+            tool = %tool_name,
+            flag = %name,
+            "count flag needs a non-negative integer; skipping"
+        );
+        return;
+    };
+    // A count of zero is the absent state, exactly like `false` on a boolean.
+    for _ in 0..times {
+        out.push(format!("--{name}"));
     }
 }
 
@@ -177,12 +224,38 @@ fn render_scalar(v: &Value) -> String {
     }
 }
 
+/// Assemble the child-process command for a tool call.
+///
+/// Split out from [`run_tool`] so the argv and environment brontes hands the
+/// OS are assertable without spawning: the caller-supplied `env` reaching the
+/// child is the only observable effect of
+/// [`crate::Config::default_env`](crate::Config::default_env) and of trace-context
+/// propagation, and both would fail silently if dropped here.
+fn build_tool_command(
+    exe: &std::path::Path,
+    argv: &[String],
+    env: &HashMap<String, String>,
+) -> TokioCommand {
+    let mut cmd = TokioCommand::new(exe);
+    cmd.args(argv)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+
+    cmd
+}
+
 /// Spawn the user's CLI binary as a subprocess for a tool call.
 ///
 /// `argv` is the subcommand-path + flags + positional args already built by
 /// [`build_command_args`]. `env` is the per-call environment merged from
-/// [`crate::Config::default_env`] and any client-supplied overrides (callers
-/// merge upstream; this function applies the result verbatim).
+/// [`crate::Config::default_env`] and the request's W3C Trace Context
+/// (callers merge upstream; this function applies the result verbatim).
 ///
 /// Cancellation: when `cancel` fires, the child is killed and an [`Error::Io`]
 /// with context `"tool cancelled"` is returned.
@@ -195,11 +268,12 @@ fn render_scalar(v: &Value) -> String {
 pub async fn run_tool(
     tool_name: &str,
     input: &ToolInput,
+    flag_specs: &BTreeMap<String, FlagSpec>,
     env: &HashMap<String, String>,
     cancel: CancellationToken,
 ) -> Result<ToolOutput> {
     let exe = current_executable()?;
-    let argv = build_command_args(tool_name, input);
+    let argv = build_command_args(tool_name, input, flag_specs);
 
     tracing::debug!(
         target: "brontes::exec",
@@ -208,16 +282,7 @@ pub async fn run_tool(
         "spawning tool subprocess"
     );
 
-    let mut cmd = TokioCommand::new(&exe);
-    cmd.args(&argv)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
+    let mut cmd = build_tool_command(&exe, &argv, env);
 
     let mut child = cmd.spawn().map_err(Error::Spawn)?;
 
@@ -340,8 +405,14 @@ async fn read_capped<R: AsyncRead + Unpin>(
 
 /// Test-only proxy for [`append_flag`]. Exposed via
 /// [`crate::__test_internal::render_flag_argv`].
-pub fn append_flag_for_test(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str) {
-    append_flag(out, name, value, tool_name);
+pub fn append_flag_for_test(
+    out: &mut Vec<String>,
+    name: &str,
+    value: &Value,
+    render: FlagRender,
+    tool_name: &str,
+) {
+    append_flag(out, name, value, render, tool_name);
 }
 
 /// Test-only proxy for [`read_capped`]. Exposed via
@@ -360,16 +431,128 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn built_command_carries_argv_and_every_env_entry() {
+        // `default_env` and trace-context propagation are only observable in
+        // the child, so assert against the command brontes actually hands the
+        // OS rather than trusting the loop that fills it.
+        let env: HashMap<String, String> = [
+            ("BRONTES_TEST_KEY".to_string(), "value".to_string()),
+            (
+                "TRACEPARENT".to_string(),
+                "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let argv = vec!["sub".to_string(), "--flag".to_string()];
+
+        let cmd = build_tool_command(std::path::Path::new("/nonexistent/bin"), &argv, &env);
+        let std_cmd = cmd.as_std();
+
+        let got_args: Vec<String> = std_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got_args, argv, "argv must reach the child verbatim");
+
+        let got_env: HashMap<String, String> = std_cmd
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(got_env, env, "every env entry must reach the child");
+    }
+
+    #[test]
+    fn built_command_with_empty_env_sets_nothing() {
+        let cmd = build_tool_command(
+            std::path::Path::new("/nonexistent/bin"),
+            &[],
+            &HashMap::new(),
+        );
+        assert_eq!(
+            cmd.as_std().get_envs().count(),
+            0,
+            "an empty env map must not fabricate variables"
+        );
+    }
+
+    /// Flag specs for a single flag under one render mode.
+    fn specs(name: &str, render: FlagRender) -> BTreeMap<String, FlagSpec> {
+        std::iter::once((name.to_string(), FlagSpec { render })).collect()
+    }
+
+    #[test]
+    fn count_flag_repeats_rather_than_passing_a_value() {
+        // clap parses an `ArgAction::Count` arg with `num_args(0)`, so the
+        // `--verbose 3` form the scalar path would emit is rejected outright
+        // as an unexpected argument. Repetition is the only accepted encoding.
+        let mut input = ToolInput::default();
+        input.flags.insert("verbose".to_string(), json!(3));
+        let argv = build_command_args("app_sub", &input, &specs("verbose", FlagRender::Count));
+        assert_eq!(
+            argv,
+            vec![
+                "sub".to_string(),
+                "--verbose".to_string(),
+                "--verbose".to_string(),
+                "--verbose".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn count_flag_of_zero_is_the_absent_state() {
+        let mut input = ToolInput::default();
+        input.flags.insert("verbose".to_string(), json!(0));
+        let argv = build_command_args("app_sub", &input, &specs("verbose", FlagRender::Count));
+        assert_eq!(argv, vec!["sub".to_string()]);
+    }
+
+    #[test]
+    fn count_flag_rejects_values_it_cannot_repeat() {
+        for bad in [json!(-1), json!("three"), json!(1.5), json!(true)] {
+            let mut input = ToolInput::default();
+            input.flags.insert("verbose".to_string(), bad.clone());
+            let argv = build_command_args("app_sub", &input, &specs("verbose", FlagRender::Count));
+            assert_eq!(
+                argv,
+                vec!["sub".to_string()],
+                "must not guess an argv form for {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_integer_flag_that_is_not_a_count_still_passes_its_value() {
+        // The render kind, not the JSON type, decides: a plain integer-valued
+        // flag must keep the `--flag N` form.
+        let mut input = ToolInput::default();
+        input.flags.insert("jobs".to_string(), json!(4));
+        let argv = build_command_args("app_sub", &input, &specs("jobs", FlagRender::Value));
+        assert_eq!(
+            argv,
+            vec!["sub".to_string(), "--jobs".to_string(), "4".to_string()]
+        );
+    }
+
+    #[test]
     fn build_args_drops_root_token() {
         let input = ToolInput::default();
-        let argv = build_command_args("myapp_sub_leaf", &input);
+        let argv = build_command_args("myapp_sub_leaf", &input, &BTreeMap::new());
         assert_eq!(argv, vec!["sub".to_string(), "leaf".to_string()]);
     }
 
     #[test]
     fn build_args_with_root_only_is_empty() {
         let input = ToolInput::default();
-        let argv = build_command_args("myapp", &input);
+        let argv = build_command_args("myapp", &input, &BTreeMap::new());
         assert!(argv.is_empty());
     }
 
@@ -377,7 +560,7 @@ mod tests {
     fn flag_bool_true_renders_long() {
         let mut input = ToolInput::default();
         input.flags.insert("verbose".to_string(), json!(true));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(argv, vec!["sub".to_string(), "--verbose".to_string()]);
     }
 
@@ -385,7 +568,7 @@ mod tests {
     fn flag_bool_false_is_omitted() {
         let mut input = ToolInput::default();
         input.flags.insert("verbose".to_string(), json!(false));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(argv, vec!["sub".to_string()]);
     }
 
@@ -395,7 +578,7 @@ mod tests {
         input
             .flags
             .insert("output".to_string(), json!("results.json"));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(
             argv,
             vec![
@@ -410,7 +593,7 @@ mod tests {
     fn flag_number_renders_decimal_string() {
         let mut input = ToolInput::default();
         input.flags.insert("limit".to_string(), json!(42));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(
             argv,
             vec!["sub".to_string(), "--limit".to_string(), "42".to_string()]
@@ -423,7 +606,7 @@ mod tests {
         input
             .flags
             .insert("tag".to_string(), json!(["alpha", "beta"]));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         // The two items each produce --tag VALUE.
         assert!(argv.windows(2).any(|w| w[0] == "--tag" && w[1] == "alpha"));
         assert!(argv.windows(2).any(|w| w[0] == "--tag" && w[1] == "beta"));
@@ -435,7 +618,7 @@ mod tests {
         input
             .flags
             .insert("label".to_string(), json!({"env": "prod"}));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         // Order: sub, --label, env=prod.
         assert!(argv.contains(&"--label".to_string()));
         assert!(argv.contains(&"env=prod".to_string()));
@@ -445,7 +628,7 @@ mod tests {
     fn flag_empty_name_is_skipped() {
         let mut input = ToolInput::default();
         input.flags.insert(String::new(), json!("ignored"));
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(argv, vec!["sub".to_string()]);
     }
 
@@ -453,7 +636,7 @@ mod tests {
     fn flag_null_value_is_skipped() {
         let mut input = ToolInput::default();
         input.flags.insert("x".to_string(), Value::Null);
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(argv, vec!["sub".to_string()]);
     }
 
@@ -462,7 +645,7 @@ mod tests {
         let mut input = ToolInput::default();
         input.flags.insert("v".to_string(), json!(true));
         input.args = vec!["a".into(), "b".into()];
-        let argv = build_command_args("app_sub", &input);
+        let argv = build_command_args("app_sub", &input, &BTreeMap::new());
         assert_eq!(
             argv,
             vec![

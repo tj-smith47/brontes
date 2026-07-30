@@ -90,8 +90,15 @@ async fn stdio_tools_list_returns_walked_tree() {
 
     // Server identity travelled across the boundary.
     let peer_info = client.peer_info().expect("server peer info available");
-    assert_eq!(peer_info.server_info.name, "brontes-smoke");
-    assert_eq!(peer_info.server_info.version, "0.0.1");
+    // Since rmcp 3.0 the peer's implementation identity is optional: a
+    // `server/discover` response is not required to carry one. brontes
+    // always reports its host CLI's name/version, so it must be present.
+    let server_info = peer_info
+        .server_info
+        .as_ref()
+        .expect("server implementation identity reported");
+    assert_eq!(server_info.name, "brontes-smoke");
+    assert_eq!(server_info.version, "0.0.1");
 
     // Clean shutdown: cancel both halves, await the server task.
     let _ = client.cancel().await;

@@ -36,11 +36,28 @@ pub static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
 fn build_schema<T: schemars::JsonSchema>() -> JsonObject {
     let schema = schemars::schema_for!(T);
     match schema.to_value() {
-        serde_json::Value::Object(map) => map,
+        serde_json::Value::Object(mut map) => {
+            strip_rust_identity(&mut map);
+            map
+        }
         other => unreachable!(
             "schemars produced a non-Object root for a JsonSchema-derived struct: {other:?}"
         ),
     }
+}
+
+/// Remove the Rust-facing identity schemars derives from the doc comment.
+///
+/// `schemars` lifts a struct's rustdoc into `description` and its Rust name
+/// into `title`.  Both are correct for a Rust reader and wrong on the wire: an
+/// MCP client shows the schema to a language model, so `"title": "ToolInput"`
+/// and a rustdoc block containing a Rust usage example spend the model's
+/// context budget describing brontes' internals instead of the wrapped
+/// command.  The rustdoc stays on docs.rs where it belongs; per-property
+/// descriptions, which do describe the command surface, are left intact.
+fn strip_rust_identity(schema: &mut JsonObject) {
+    schema.remove("title");
+    schema.remove("description");
 }
 
 /// Return a fresh [`JsonObject`] clone of the `ToolInput` base schema.
@@ -55,6 +72,47 @@ pub fn fresh_tool_input_schema() -> JsonObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_schemas_carry_no_rust_facing_identity() {
+        // The rustdoc on `ToolInput` / `ToolOutput` includes a Rust usage
+        // example; shipping it as the schema description spends the model's
+        // context on brontes internals. Both keys must be gone from the root.
+        for schema in [
+            fresh_tool_input_schema(),
+            (**TOOL_OUTPUT_BASE_SCHEMA).clone(),
+        ] {
+            assert!(
+                !schema.contains_key("title"),
+                "root must not carry the Rust type name"
+            );
+            assert!(
+                !schema.contains_key("description"),
+                "root must not carry the struct rustdoc"
+            );
+        }
+    }
+
+    #[test]
+    fn property_descriptions_survive_and_carry_no_intra_doc_links() {
+        // Stripping the root must not take the per-property text with it —
+        // that text describes the actual command surface.
+        let schema = (**TOOL_OUTPUT_BASE_SCHEMA).clone();
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("properties");
+        for key in ["stdout", "stderr", "exit_code"] {
+            let desc = props[key]
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("{key} must keep a description"));
+            assert!(
+                !desc.contains('['),
+                "{key} description must not leak an intra-doc link: {desc:?}"
+            );
+        }
+    }
 
     #[test]
     fn tool_input_schema_is_object_with_properties() {

@@ -15,7 +15,7 @@
 pub mod http;
 pub mod stdio;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use clap::Command;
@@ -23,16 +23,20 @@ use futures::future::BoxFuture;
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, InitializeResult,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ClientCapabilities, ContentBlock,
+    DiscoverResult, Implementation, InitializeResult, InputRequest, InputRequiredResult,
+    JsonObject, ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities,
+    ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 
 use crate::Config;
 use crate::Result;
 use crate::command::ResolvedTool;
-use crate::selector::{BoxedNext, MiddlewareCtx, MiddlewareResult};
+use crate::schema::FlagSpec;
+use crate::selector::{BoxedNext, MiddlewareCtx, MiddlewareOutcome, MiddlewareResult};
 use crate::tool::{ToolInput, ToolOutput};
+use crate::trace::TraceContext;
 
 /// MCP server handler that exposes a walked clap tree as MCP tools.
 ///
@@ -132,6 +136,26 @@ impl ServerHandler for BrontesServer {
         self.build_server_info()
     }
 
+    /// Answer `server/discover` (SEP-2575) with cache hints attached.
+    ///
+    /// rmcp's default implementation builds the right payload but leaves
+    /// `ttlMs` at zero, which tells clients to re-discover on every
+    /// connection. brontes' discovery response is as static as its tool
+    /// list — supported versions, `tools`-only capabilities, and the host
+    /// CLI's identity are all fixed at construction — so it carries the
+    /// same hints as `tools/list`.
+    async fn discover(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<DiscoverResult, McpError> {
+        Ok(DiscoverResult::from_server_info(
+            self.supported_protocol_versions().into_owned(),
+            self.get_info(),
+        )
+        .with_ttl_ms(self.cfg.resolved_cache_ttl_ms())
+        .with_cache_scope(self.cfg.resolved_cache_scope()))
+    }
+
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -139,15 +163,23 @@ impl ServerHandler for BrontesServer {
     ) -> std::result::Result<ListToolsResult, McpError> {
         // Project the cache down to the wire shape: clients receive
         // descriptors only, not the runtime-side middleware references.
+        // Ordering is the walk's depth-first clap order and is stable across
+        // calls — the 2026-07-28 spec asks servers to keep it that way so
+        // clients (and LLM prompt caches) can cache the listing.
         let tools: Vec<Tool> = self.tools.iter().map(|r| r.tool.clone()).collect();
-        Ok(ListToolsResult::with_all_items(tools))
+        // SEP-2549 cache hints: rmcp leaves both fields `None` unless the
+        // handler fills them, and a client that sees no `ttlMs` will not
+        // cache at all.
+        Ok(ListToolsResult::with_all_items(tools)
+            .with_ttl_ms(self.cfg.resolved_cache_ttl_ms())
+            .with_cache_scope(self.cfg.resolved_cache_scope()))
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> std::result::Result<CallToolResult, McpError> {
+    ) -> std::result::Result<CallToolResponse, McpError> {
         let name = request.name.as_ref();
 
         // Validate the tool exists in the current walked tree. The MCP
@@ -163,28 +195,58 @@ impl ServerHandler for BrontesServer {
         // Deserialize the client-supplied arguments into ToolInput. Default
         // to an empty payload when the client sends no arguments at all.
         let input: ToolInput = match request.arguments {
-            Some(map) => serde_json::from_value(serde_json::Value::Object(map)).map_err(|e| {
-                McpError::invalid_params(format!("invalid arguments for {name}: {e}"), None)
-            })?,
+            Some(mut map) => {
+                fold_promoted_flags(&mut map, &resolved.promoted_flags).map_err(|misplaced| {
+                    McpError::invalid_params(
+                        format!(
+                            "flag(s) for {name} must be supplied as top-level arguments, not \
+                             under `flags`: {misplaced}"
+                        ),
+                        None,
+                    )
+                })?;
+                serde_json::from_value(serde_json::Value::Object(map)).map_err(|e| {
+                    McpError::invalid_params(format!("invalid arguments for {name}: {e}"), None)
+                })?
+            }
             None => ToolInput::default(),
         };
 
-        // Merge default_env with any tool-call-specific env overrides.
-        // Per-call overrides win on conflict (none are exposed yet;
-        // middleware can shape ToolInput before forwarding).
-        let env: HashMap<String, String> = self.cfg.default_env.clone();
+        // The input schema advertises `additionalProperties: false` on `flags`,
+        // and nothing in the MCP layer enforces it. Honoring it here is what
+        // makes that advertisement true; forwarding an unknown flag instead
+        // reaches the CLI as an opaque clap usage error.
+        if let Some(unknown) = unknown_flags(&input, &resolved.flag_specs) {
+            return Err(McpError::invalid_params(
+                format!("unknown flag(s) for {name}: {unknown}"),
+                None,
+            ));
+        }
+
+        let trace_context = TraceContext::from_meta(&context.meta, name);
+        let env = resolve_call_env(&self.cfg, &trace_context);
 
         let middleware = resolved.middleware.clone();
         let command_path = resolved.command_path.clone();
+        let flag_specs = resolved.flag_specs.clone();
+        let protocol_version = context.protocol_version();
+        let client_capabilities = context.client_capabilities();
         let ctx = MiddlewareCtx {
             cancellation_token: context.ct.clone(),
             tool_name: name.to_string(),
             input,
+            trace_context,
+            meta: context.meta.clone(),
+            protocol_version: protocol_version.clone(),
+            client_capabilities: client_capabilities.clone(),
+            input_responses: request.input_responses,
+            request_state: request.request_state,
         };
 
         // Build the leaf-of-chain: a one-shot async closure that invokes the
         // subprocess via [`crate::exec::run_tool`]. Owned captures (`env`,
-        // `tool_name`) keep the future `'static` for `tokio::spawn`.
+        // `flag_specs`, `tool_name`) keep the future `'static` for
+        // `tokio::spawn`.
         let exec_tool_name = name.to_string();
         let next: BoxedNext = Box::new(
             move |ctx_inner: MiddlewareCtx| -> BoxFuture<'static, MiddlewareResult> {
@@ -192,10 +254,12 @@ impl ServerHandler for BrontesServer {
                     crate::exec::run_tool(
                         &exec_tool_name,
                         &ctx_inner.input,
+                        &flag_specs,
                         &env,
                         ctx_inner.cancellation_token,
                     )
                     .await
+                    .map(MiddlewareOutcome::Complete)
                 })
             },
         );
@@ -220,34 +284,237 @@ impl ServerHandler for BrontesServer {
                 // `is_error: true`) rather than a JSON-RPC Err. The MCP
                 // server keeps running; the client learns this one call
                 // failed without the transport tearing down.
-                return Ok(tool_error_result(
-                    name,
-                    &command_path,
-                    &crate::Error::Panic(payload),
-                ));
+                return Ok(
+                    tool_error_result(name, &command_path, &crate::Error::Panic(payload)).into(),
+                );
             }
             Err(join_err) => {
                 return Ok(tool_error_result(
                     name,
                     &command_path,
                     &crate::Error::Panic(format!("middleware/exec task join error: {join_err}")),
-                ));
+                )
+                .into());
             }
         };
 
-        match result {
-            Ok(output) => Ok(tool_output_to_result(name, &output)),
-            // Middleware-level or exec-level errors propagate as
-            // `tool_error` so a single misbehaving call cannot kill the
-            // server. Spawn failures, timeouts, cancellation, etc. all
-            // land here.
-            Err(e) => Ok(tool_error_result(name, &command_path, &e)),
-        }
+        Ok(outcome_to_response(
+            result,
+            name,
+            &command_path,
+            protocol_version.as_ref(),
+            client_capabilities.as_ref(),
+        ))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.find_tool(name)
     }
+}
+
+/// Turn what the middleware chain produced into the `tools/call` response.
+///
+/// Every path answers with a result rather than a JSON-RPC error, including a
+/// middleware that asked for input the peer cannot supply: one misbehaving call
+/// must not be able to fail the request at the protocol level.
+fn outcome_to_response(
+    result: MiddlewareResult,
+    name: &str,
+    command_path: &str,
+    protocol_version: Option<&ProtocolVersion>,
+    client_capabilities: Option<&ClientCapabilities>,
+) -> CallToolResponse {
+    match result {
+        Ok(MiddlewareOutcome::Complete(output)) => tool_output_to_result(name, &output).into(),
+        Ok(MiddlewareOutcome::InputRequired(input_required)) => input_required_to_response(
+            input_required,
+            name,
+            command_path,
+            protocol_version,
+            client_capabilities,
+        ),
+        // Middleware-level or exec-level errors propagate as `tool_error` so a
+        // single misbehaving call cannot kill the server. Spawn failures,
+        // timeouts, cancellation, etc. all land here.
+        Err(e) => tool_error_result(name, command_path, &e).into(),
+    }
+}
+
+/// Send the middleware's input request, or degrade it to a tool error when the
+/// peer could not act on it.
+fn input_required_to_response(
+    input_required: Box<InputRequiredResult>,
+    name: &str,
+    command_path: &str,
+    protocol_version: Option<&ProtocolVersion>,
+    client_capabilities: Option<&ClientCapabilities>,
+) -> CallToolResponse {
+    if let Some(reason) =
+        reject_unsendable_input_request(&input_required, protocol_version, client_capabilities)
+    {
+        tracing::warn!(
+            target: "brontes::server",
+            tool = %name,
+            %reason,
+            "dropping an input request the client cannot answer"
+        );
+        return tool_error_result(name, command_path, &crate::Error::Config(reason)).into();
+    }
+    CallToolResponse::InputRequired(*input_required)
+}
+
+/// Explain why an [`InputRequiredResult`] must not reach this peer, or `None`
+/// when it is safe to send.
+///
+/// Two conditions make the result unparseable at the other end, and rmcp guards
+/// neither in a way brontes can live with:
+///
+/// - Below protocol `2026-07-28` the result type does not exist. rmcp turns the
+///   attempt into a JSON-RPC `-32600`, which would break brontes' invariant that
+///   a tool call always answers with a result rather than a protocol error.
+/// - An elicitation request needs a client that declared the elicitation
+///   capability. rmcp enforces this for the Tasks extension only, so an
+///   elicitation would otherwise be sent to a client with no way to answer it,
+///   hanging the call.
+///
+/// Sampling and roots requests are deliberately not capability-checked here:
+/// both are deprecated as of `2026-07-28`, and a middleware that reaches for one
+/// has made a decision brontes should not silently override.
+fn reject_unsendable_input_request(
+    input_required: &InputRequiredResult,
+    protocol_version: Option<&ProtocolVersion>,
+    client_capabilities: Option<&ClientCapabilities>,
+) -> Option<String> {
+    // Compared exactly the way rmcp compares it, so brontes' gate and rmcp's
+    // can never disagree about a given peer. ISO `YYYY-MM-DD` versions order
+    // lexically the same as chronologically.
+    let mrtr_supported =
+        protocol_version.is_some_and(|v| v.as_str() >= ProtocolVersion::V_2026_07_28.as_str());
+    if !mrtr_supported {
+        let reported = protocol_version.map_or("unknown", ProtocolVersion::as_str);
+        return Some(format!(
+            "middleware asked the client for input, which requires MCP protocol \
+             2026-07-28 or newer; this client negotiated {reported}"
+        ));
+    }
+
+    let wants_elicitation = input_required
+        .input_requests
+        .as_ref()
+        .is_some_and(|requests| {
+            requests
+                .values()
+                .any(|r| matches!(r, InputRequest::Elicitation(_)))
+        });
+    if wants_elicitation && client_capabilities.is_none_or(|caps| caps.elicitation.is_none()) {
+        return Some(
+            "middleware asked the client to elicit input, but the client did not \
+             declare the elicitation capability"
+                .to_owned(),
+        );
+    }
+
+    None
+}
+
+/// Move SEP-2243-promoted values from the top level of a call's arguments back
+/// into `flags`, so the rest of the pipeline never learns promotion happened.
+///
+/// A promoted flag is advertised beside `flags` because that is the only place
+/// `x-mcp-header` is honored, but nothing downstream — [`ToolInput`], the
+/// unknown-flag check, argv rendering — should have to know that. Folding here
+/// keeps promotion a property of the wire shape alone.
+///
+/// Only promoted names move. Any other top-level key is left alone, to be
+/// handled exactly as it was before promotion existed — this function is not
+/// the place to change what brontes accepts, only where a promoted value lives.
+///
+/// Returns the misplaced names when the call supplies a promoted flag under
+/// `flags` instead. Accepting it there would defeat the promotion silently: the
+/// value would reach the command, no `Mcp-Param-*` header would accompany it,
+/// and a call that sent both places would leave brontes guessing. The caller
+/// turns this into an error that says where the value belongs.
+fn fold_promoted_flags(
+    arguments: &mut JsonObject,
+    promoted: &BTreeSet<String>,
+) -> std::result::Result<(), String> {
+    if promoted.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(serde_json::Value::Object(flags)) = arguments.get("flags") {
+        let misplaced: Vec<&str> = promoted
+            .iter()
+            .filter(|name| flags.contains_key(*name))
+            .map(String::as_str)
+            .collect();
+        if !misplaced.is_empty() {
+            return Err(misplaced.join(", "));
+        }
+    }
+
+    let hoisted: Vec<(String, serde_json::Value)> = promoted
+        .iter()
+        .filter_map(|name| arguments.remove(name).map(|v| (name.clone(), v)))
+        .collect();
+    if hoisted.is_empty() {
+        return Ok(());
+    }
+
+    let flags = arguments
+        .entry("flags")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let serde_json::Value::Object(flags) = flags {
+        for (name, value) in hoisted {
+            flags.insert(name, value);
+        }
+    }
+
+    Ok(())
+}
+
+/// `_meta` key carrying the brontes error category on a failed tool call.
+///
+/// Reverse-DNS namespaced per the spec's rule for `_meta` extension keys, so it
+/// cannot collide with a reserved key or another server's extension.
+const META_KEY_ERROR_CATEGORY: &str = "io.github.tj-smith47.brontes/errorCategory";
+
+/// `_meta` key carrying the space-joined clap path of the failed command.
+const META_KEY_COMMAND_PATH: &str = "io.github.tj-smith47.brontes/commandPath";
+
+/// Report the flag names a call supplied that the tool does not expose, as a
+/// comma-separated list, or `None` when every name is known.
+///
+/// The names are sorted so the message is identical across calls — a client
+/// diffing two failures should see a difference only when the input differed.
+fn unknown_flags(input: &ToolInput, flag_specs: &BTreeMap<String, FlagSpec>) -> Option<String> {
+    let mut unknown: Vec<&str> = input
+        .flags
+        .keys()
+        .filter(|name| !flag_specs.contains_key(name.as_str()))
+        .map(String::as_str)
+        .collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    unknown.sort_unstable();
+    Some(unknown.join(", "))
+}
+
+/// Build the environment for one tool call: [`Config::default_env`] overlaid
+/// with the request's W3C Trace Context when propagation is enabled.
+///
+/// Per-request trace context wins over `default_env` on conflict. A statically
+/// pinned `TRACEPARENT` would fold every call into a single span, so treating
+/// it as the weaker value is what keeps traces correct.
+fn resolve_call_env(cfg: &Config, trace_context: &TraceContext) -> HashMap<String, String> {
+    let mut env = cfg.default_env.clone();
+    if cfg.resolved_propagate_trace_context() {
+        for (key, value) in trace_context.env_pairs() {
+            env.insert(key.to_owned(), value.to_owned());
+        }
+    }
+    env
 }
 
 /// Render a middleware-or-exec failure as a [`CallToolResult`] with
@@ -267,11 +534,36 @@ fn tool_error_result(name: &str, command_path: &str, e: &crate::Error) -> CallTo
         format!("{base} (command: \"{command_path}\")")
     };
     let mut r = CallToolResult::error(vec![ContentBlock::text(body.clone())]);
-    r.structured_content = Some(serde_json::json!({
-        "error": body,
-        "category": brontes_error_category(e),
-        "command": command_path,
-    }));
+    // `structuredContent` must satisfy the tool's advertised `outputSchema`,
+    // which is `ToolOutput` with all three fields required. A failure that
+    // never produced a process outcome still has to answer in that shape, or a
+    // schema-validating client rejects the result instead of reading the error.
+    // `exit_code: -1` is the same "the OS reported no exit code" sentinel
+    // `ToolOutput` already documents.
+    // `ToolOutput` is three owned primitives, so serialization cannot fail.
+    // Degrading to `null` rather than panicking keeps a hypothetical serde
+    // change from taking the server down mid-call.
+    r.structured_content = Some(
+        serde_json::to_value(ToolOutput {
+            stdout: String::new(),
+            stderr: body,
+            exit_code: -1,
+        })
+        .unwrap_or(serde_json::Value::Null),
+    );
+    // The brontes-specific detail moves to `_meta`, where the spec allows
+    // namespaced extension keys, so a client can still tell a spawn failure
+    // from a panic without the payload violating `outputSchema`.
+    let mut meta = rmcp::model::MetaObject::new();
+    meta.0.insert(
+        META_KEY_ERROR_CATEGORY.to_owned(),
+        serde_json::Value::String(brontes_error_category(e).to_owned()),
+    );
+    meta.0.insert(
+        META_KEY_COMMAND_PATH.to_owned(),
+        serde_json::Value::String(command_path.to_owned()),
+    );
+    r.meta = Some(meta);
     r
 }
 
@@ -372,6 +664,212 @@ mod tests {
             .subcommand(Command::new("greet").about("Say hi"))
     }
 
+    /// Request `_meta` carrying the W3C specification's own example
+    /// traceparent plus vendor state and baggage.
+    fn traced_meta() -> rmcp::model::RequestMetaObject {
+        let mut meta = rmcp::model::RequestMetaObject::new();
+        meta.0
+            .set_traceparent("00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01");
+        meta.0.set_tracestate("vendor=state");
+        meta.0.set_baggage("tenant=acme");
+        meta
+    }
+
+    #[test]
+    fn call_env_lowers_trace_context_onto_the_w3c_variables() {
+        let trace = TraceContext::from_meta(&traced_meta(), "tool");
+        let env = resolve_call_env(&Config::default(), &trace);
+
+        assert_eq!(
+            env.get("TRACEPARENT").map(String::as_str),
+            Some("00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01")
+        );
+        assert_eq!(
+            env.get("TRACESTATE").map(String::as_str),
+            Some("vendor=state")
+        );
+        assert_eq!(env.get("BAGGAGE").map(String::as_str), Some("tenant=acme"));
+    }
+
+    #[test]
+    fn call_env_is_only_default_env_when_the_request_carries_no_trace() {
+        let cfg = Config::default().default_env("EXISTING", "kept");
+        let env = resolve_call_env(&cfg, &TraceContext::default());
+
+        assert_eq!(env.get("EXISTING").map(String::as_str), Some("kept"));
+        assert!(
+            !env.contains_key("TRACEPARENT"),
+            "an untraced request must not fabricate a traceparent"
+        );
+        assert_eq!(env.len(), 1);
+    }
+
+    #[test]
+    fn per_request_trace_context_wins_over_a_pinned_default_env() {
+        let cfg = Config::default().default_env("TRACEPARENT", "pinned-and-wrong");
+        let trace = TraceContext::from_meta(&traced_meta(), "tool");
+        let env = resolve_call_env(&cfg, &trace);
+
+        assert_eq!(
+            env.get("TRACEPARENT").map(String::as_str),
+            Some("00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"),
+            "a pinned TRACEPARENT must not fold every call into one span"
+        );
+    }
+
+    #[test]
+    fn propagation_off_leaves_default_env_untouched() {
+        let cfg = Config::default()
+            .propagate_trace_context(false)
+            .default_env("TRACEPARENT", "pinned");
+        let trace = TraceContext::from_meta(&traced_meta(), "tool");
+        let env = resolve_call_env(&cfg, &trace);
+
+        assert_eq!(
+            env.get("TRACEPARENT").map(String::as_str),
+            Some("pinned"),
+            "with propagation off the request must not touch the environment"
+        );
+        assert!(!env.contains_key("TRACESTATE"));
+        assert!(!env.contains_key("BAGGAGE"));
+    }
+
+    /// An `InputRequiredResult` carrying one elicitation request.
+    fn elicitation_required() -> InputRequiredResult {
+        let mut requests = rmcp::model::InputRequests::new();
+        requests.insert(
+            "confirm".to_owned(),
+            InputRequest::Elicitation(rmcp::model::ElicitRequest::new(
+                rmcp::model::ElicitRequestParams::FormElicitationParams {
+                    meta: None,
+                    message: "Proceed?".to_owned(),
+                    requested_schema: rmcp::model::ElicitationSchema::new(
+                        std::collections::BTreeMap::new(),
+                    ),
+                },
+            )),
+        );
+        InputRequiredResult::new(Some(requests), Some("opaque-state".to_owned()))
+    }
+
+    /// An `InputRequiredResult` with no requests at all — a bare state carrier.
+    fn state_only_required() -> InputRequiredResult {
+        InputRequiredResult::from_request_state("opaque-state")
+    }
+
+    fn elicitation_capable() -> ClientCapabilities {
+        ClientCapabilities::builder().enable_elicitation().build()
+    }
+
+    #[test]
+    fn input_request_reaches_a_capable_2026_peer() {
+        assert!(
+            reject_unsendable_input_request(
+                &elicitation_required(),
+                Some(&ProtocolVersion::V_2026_07_28),
+                Some(&elicitation_capable()),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn input_request_is_refused_below_the_2026_revision() {
+        // rmcp would turn this into a JSON-RPC -32600, which breaks brontes'
+        // invariant that a tool call always answers with a result.
+        let reason = reject_unsendable_input_request(
+            &elicitation_required(),
+            Some(&ProtocolVersion::V_2025_11_25),
+            Some(&elicitation_capable()),
+        )
+        .expect("must be refused");
+        assert!(reason.contains("2026-07-28"), "{reason}");
+        assert!(
+            reason.contains("2025-11-25"),
+            "must name the peer: {reason}"
+        );
+    }
+
+    #[test]
+    fn input_request_is_refused_when_the_peer_version_is_unknown() {
+        let reason = reject_unsendable_input_request(
+            &elicitation_required(),
+            None,
+            Some(&elicitation_capable()),
+        )
+        .expect("must be refused");
+        assert!(reason.contains("unknown"), "{reason}");
+    }
+
+    #[test]
+    fn elicitation_is_refused_when_the_client_never_declared_it() {
+        // rmcp capability-checks the Tasks extension but not MRTR, so an
+        // elicitation would otherwise reach a client with no way to answer and
+        // hang the call.
+        for caps in [None, Some(&ClientCapabilities::default())] {
+            let reason = reject_unsendable_input_request(
+                &elicitation_required(),
+                Some(&ProtocolVersion::V_2026_07_28),
+                caps,
+            )
+            .expect("must be refused");
+            assert!(reason.contains("elicitation capability"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn a_state_only_input_request_needs_no_elicitation_capability() {
+        // Nothing is being asked of the client beyond echoing state back, so
+        // the capability check must not fire.
+        assert!(
+            reject_unsendable_input_request(
+                &state_only_required(),
+                Some(&ProtocolVersion::V_2026_07_28),
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_refused_input_request_becomes_a_tool_error_not_a_protocol_error() {
+        let response = outcome_to_response(
+            Ok(crate::selector::MiddlewareOutcome::InputRequired(Box::new(
+                elicitation_required(),
+            ))),
+            "myapp_greet",
+            "myapp greet",
+            Some(&ProtocolVersion::V_2025_11_25),
+            Some(&elicitation_capable()),
+        );
+        let CallToolResponse::Complete(result) = response else {
+            panic!("a refused input request must degrade to a completed error result");
+        };
+        assert_eq!(result.is_error, Some(true));
+        // And it must still satisfy the advertised outputSchema.
+        let sc = result.structured_content.expect("structured_content");
+        let parsed: ToolOutput = serde_json::from_value(sc).expect("conforms to ToolOutput");
+        assert_eq!(parsed.exit_code, -1);
+        assert!(parsed.stderr.contains("2026-07-28"), "{}", parsed.stderr);
+    }
+
+    #[test]
+    fn an_accepted_input_request_passes_through_unchanged() {
+        let response = outcome_to_response(
+            Ok(crate::selector::MiddlewareOutcome::InputRequired(Box::new(
+                elicitation_required(),
+            ))),
+            "myapp_greet",
+            "myapp greet",
+            Some(&ProtocolVersion::V_2026_07_28),
+            Some(&elicitation_capable()),
+        );
+        let CallToolResponse::InputRequired(result) = response else {
+            panic!("a sendable input request must not be degraded");
+        };
+        assert_eq!(result.request_state.as_deref(), Some("opaque-state"));
+    }
+
     #[test]
     fn server_info_uses_root_name_and_version_by_default() {
         let s = BrontesServer::new(root(), Config::default()).expect("construct");
@@ -455,16 +953,65 @@ mod tests {
             "body must include command path; got: {body:?}"
         );
 
-        // The structured payload must also carry the command path.
-        let sc = result
-            .structured_content
-            .as_ref()
-            .expect("structured_content must be Some");
+        // The command path moved to `_meta`: `structuredContent` must stay
+        // inside the advertised `outputSchema`, which has no `command` field.
+        let meta = result.meta.as_ref().expect("_meta must be Some");
         assert_eq!(
-            sc["command"].as_str(),
+            meta.0[META_KEY_COMMAND_PATH].as_str(),
             Some("myapp greet"),
-            "structured_content.command must equal the command path"
+            "_meta must carry the command path"
         );
+        assert_eq!(
+            meta.0[META_KEY_ERROR_CATEGORY].as_str(),
+            Some("panic"),
+            "_meta must carry the error category"
+        );
+    }
+
+    #[test]
+    fn error_results_satisfy_the_advertised_output_schema() {
+        // rmcp does not validate `structuredContent` server-side, so a payload
+        // that misses a required key fails only at a validating client — the
+        // quietest possible failure. Assert the contract here instead.
+        let required: Vec<String> = crate::schema::build_output_schema()["required"]
+            .as_array()
+            .expect("outputSchema.required")
+            .iter()
+            .map(|v| v.as_str().expect("required entries are strings").to_owned())
+            .collect();
+        assert_eq!(required, ["stdout", "stderr", "exit_code"]);
+
+        // Every Error variant travels this path: spawn failure, panic,
+        // cancellation, config, IO.
+        let errors = [
+            crate::Error::Panic("boom".to_string()),
+            crate::Error::Config("bad".to_string()),
+            crate::Error::Spawn(std::io::Error::other("nope")),
+        ];
+        for e in &errors {
+            let result = tool_error_result("myapp_greet", "myapp greet", e);
+            let sc = result
+                .structured_content
+                .as_ref()
+                .expect("structured_content must be Some");
+            for key in &required {
+                assert!(
+                    sc.get(key).is_some(),
+                    "structuredContent for {e:?} must carry the required key {key:?}: {sc}"
+                );
+            }
+            assert_eq!(sc["exit_code"], -1, "no process outcome uses the sentinel");
+            assert!(
+                sc["stderr"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("myapp greet")),
+                "the failure detail must survive in stderr: {sc}"
+            );
+            // It must also round-trip as the type the schema describes.
+            let parsed: ToolOutput =
+                serde_json::from_value(sc.clone()).expect("must deserialize as ToolOutput");
+            assert_eq!(parsed.exit_code, -1);
+        }
     }
 
     #[test]

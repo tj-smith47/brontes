@@ -159,7 +159,8 @@ Backups are **only** written when an existing file is mutated — first writes d
 ## Features
 
 - **Stdio MCP server** — `mcp start` runs an stdio server fronting your clap CLI; the launch transport every editor manager wires up.
-- **Streamable HTTP MCP server** — `mcp stream` exposes the same tool list over HTTP via rmcp 1.6; loopback-only by default, widen with `--allow-host`.
+- **Streamable HTTP MCP server** — `mcp stream` exposes the same tool list over HTTP via rmcp 3.0; loopback-only by default, widen with `--allow-host`.
+- **MCP `2026-07-28` support** — stateless requests, `server/discover`, and SEP-2549 cache hints, with every earlier protocol revision back to `2024-11-05` still negotiable. See [Protocol support](#protocol-support).
 - **Editor managers** for Claude Desktop, Cursor, VSCode, and Zed — each with `enable` / `disable` / `list` leaves, `--workspace` per-project mode where applicable, and snapshot-before-write backups. Zed preserves unrelated `settings.json` keys (theme, font, keymap) and tolerates JSONC on load.
 - **Async middleware** — `Middleware` wraps tool execution for auth, audit logging, rate limiting, or distributed tracing without forking the runtime.
 - **Default env injection** — `Config::default_env(key, val)` ships env vars with every tool launch; per-call `env` from the MCP client wins on key conflict.
@@ -324,6 +325,98 @@ $ my-cli mcp stream --host 0.0.0.0 --port 8080 \
 
 See [SECURITY.md](SECURITY.md) for the full HTTP-transport threat model.
 
+## Protocol support
+
+brontes negotiates every MCP protocol revision rmcp knows, newest first:
+
+| Revision | Notes |
+|---|---|
+| `2026-07-28` | Stateless — no `initialize` handshake, no `Mcp-Session-Id`. Serves `server/discover`, carries `resultType`, and honours SEP-2243 standard headers (`Mcp-Method` / `Mcp-Name`). |
+| `2025-11-25` | Fallback offered to clients that request an unknown version. |
+| `2025-06-18`, `2025-03-26`, `2024-11-05` | Still negotiable; these keep the handshake and, over HTTP, a session id. |
+
+A brontes server advertises exactly one capability — `tools`. The
+`2026-07-28` revision deprecates Roots, Sampling, and Logging, and brontes
+implements none of them: it logs to stderr via `tracing` (the migration the
+spec suggests for Logging), and `Middleware` is the extension point for
+anything a server would otherwise ask the client to do.
+
+### Cache hints (SEP-2549)
+
+`tools/list` and `server/discover` results carry `ttlMs` and `cacheScope` so
+clients stop re-listing on every turn. A brontes tool list is walked once at
+server construction from an immutable `clap` tree and depends on nothing
+per-client, so the defaults are five minutes and `public`:
+
+```rust
+use std::time::Duration;
+use brontes::{CacheScope, Config};
+
+let cfg = Config::default()
+    .cache_ttl(Duration::from_secs(30))     // Duration::ZERO = "do not cache"
+    .cache_scope(CacheScope::Private);      // for a shared caching proxy
+```
+
+Narrow the scope to `Private` when a caching intermediary sits between
+brontes and clients in different trust domains.
+
+### Promoting a flag to an HTTP header (SEP-2243)
+
+SEP-2243 lets a streamable-HTTP client mirror a tool argument into an
+`Mcp-Param-*` header so proxies and gateways can route on it without parsing
+the body. The annotation is honored only on **top-level** properties, and
+brontes normally nests every flag under `flags` — so `promote_flag` hoists the
+one you name:
+
+```rust
+use brontes::Config;
+
+let cfg = Config::default()
+    .promote_flag("myapp deploy", "region")               // Mcp-Param-region
+    .promote_flag_as("myapp deploy", "api-key", "Api-Key"); // Mcp-Param-Api-Key
+```
+
+```jsonc
+// tools/list — before                    // tools/list — after
+{                                         {
+  "properties": {                           "properties": {
+    "flags": {                                "flags": {
+      "properties": {                           "properties": {
+        "region": { "type": "string" }            /* region is gone */
+      }                                         }
+    },                                        },
+    "args": { "type": "array" }               "args": { "type": "array" },
+  }                                           "region": {
+}                                               "type": "string",
+                                                "x-mcp-header": "region"
+                                              }
+                                            }
+                                          }
+```
+
+```jsonc
+// tools/call — the promoted flag travels at the top level…
+{ "region": "us-east-1", "flags": { "dry-run": true }, "args": [] }
+```
+```http
+Mcp-Param-region: us-east-1
+```
+
+brontes folds `region` back into `flags` before running the command, so the CLI
+receives `--region us-east-1` exactly as it did before promotion.
+
+Three rules keep this from failing silently:
+
+| Rule | Why | On violation |
+|---|---|---|
+| The flag is no longer accepted under `flags` | A value in two places is a value two callers can disagree about | Tool error naming where it belongs |
+| Type must be `string`, `integer`, or `boolean` | A header cannot carry an array or object | `generate_tools` returns `Err` |
+| Header names unique per command, valid HTTP tokens | HTTP folds case; an invalid token cannot be sent | `generate_tools` returns `Err` |
+
+`x-mcp-header` inside a `Config::flag_schema` override still does nothing —
+that schema lands nested under `flags`, where the annotation is not read — and
+logs a warning pointing at `promote_flag`.
+
 ## API reference
 
 - `brontes::command(cfg)` / `brontes::handle(matches, cli, cfg)` /
@@ -335,8 +428,8 @@ See [SECURITY.md](SECURITY.md) for the full HTTP-transport threat model.
   offline tool-list builder for consumers that wire their own server.
 - `brontes::Config` — fluent builder for tool-name prefix, selectors,
   default env, annotations, deprecated commands, per-flag schema/type
-  overrides, log level, MCP `Implementation` identity, and per-command
-  description configuration.
+  overrides, SEP-2243 header promotion, trace-context propagation, log level,
+  MCP `Implementation` identity, and per-command description configuration.
 - `brontes::DescriptionMode` — `Short` (prefer `about`) or `Long` (prefer
   `long_about`); default is `Long`.
 - `brontes::Selector` + `brontes::selectors::{allow_cmds, exclude_cmds,

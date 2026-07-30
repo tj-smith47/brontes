@@ -48,9 +48,25 @@
 //!   (`mcp stream --host <addr> --port <num>`).
 //! - [`Config`] — selectors, annotations, per-flag schema overrides,
 //!   default environment variables, server identity overrides, per-command
-//!   description mode and full-text override.
+//!   description mode and full-text override, and the SEP-2549 cache hints
+//!   advertised on `tools/list` / `server/discover`.
 //! - [`Selector`], [`Middleware`] — first-match-wins routing rules and
 //!   an async middleware boundary for wrapping tool execution.
+//!
+//! # Protocol support
+//!
+//! brontes negotiates every MCP revision rmcp knows, through `2026-07-28`.
+//! That revision is stateless — no `initialize` handshake and no session
+//! id — and adds `server/discover`, a `resultType` discriminator on every
+//! result, and cache hints on list results; brontes serves all three.
+//! Earlier revisions back to `2024-11-05` still negotiate, handshake and
+//! all.
+//!
+//! A brontes server advertises exactly one capability, `tools`. Roots,
+//! Sampling, and Logging are deprecated as of `2026-07-28` and brontes
+//! implements none of them: it logs to stderr via `tracing`, and
+//! [`Middleware`] is the extension point for anything a server would
+//! otherwise delegate to the client.
 //!
 //! Bug reports and feature requests:
 //! <https://github.com/tj-smith47/brontes/issues>.
@@ -73,17 +89,57 @@ pub mod selectors;
 mod server;
 mod subcommands;
 mod tool;
+mod trace;
 mod walk;
 
 pub use annotations::ToolAnnotations;
 pub use command::{command, generate_tools, handle, run, run_from};
 pub use config::{Config, DescriptionMode};
 pub use error::{Error, Result};
+// Re-exported so setting `Config::cache_scope` does not force a direct `rmcp`
+// dependency on consumers — and, more importantly, so the value they pass is
+// guaranteed to be the same `CacheScope` the linked rmcp expects rather than
+// one from a different rmcp major version in their own tree.
+pub use rmcp::model::CacheScope;
 pub use schema::SchemaType;
 pub use selector::{
-    BoxedNext, CmdMatcher, FlagMatcher, Middleware, MiddlewareCtx, MiddlewareResult, Selector,
+    BoxedNext, CmdMatcher, FlagMatcher, Middleware, MiddlewareCtx, MiddlewareOutcome,
+    MiddlewareResult, Selector,
 };
 pub use tool::{ToolInput, ToolOutput};
+pub use trace::TraceContext;
+
+/// The `rmcp` types that appear on brontes' own public surface.
+///
+/// [`MiddlewareCtx`] hands a middleware the negotiated protocol version, the
+/// client's declared capabilities, the raw request `_meta`, and — on an MRTR
+/// retry — the client's answers; [`MiddlewareOutcome::InputRequired`] takes an
+/// [`InputRequiredResult`]. None of that is usable if the consumer cannot name
+/// the types, and naming them through a direct `rmcp` dependency risks a
+/// different major version than the one brontes is linked against, which fails
+/// as a confusing type mismatch. Re-exporting is the same reasoning as
+/// [`CacheScope`] above, applied to the whole boundary.
+///
+/// Only the elicitation half of [`InputRequest`] is re-exported. Sampling and
+/// roots are deprecated as of `2026-07-28`, and re-exporting their envelopes
+/// would raise a deprecation warning in every consumer that so much as links
+/// brontes. brontes still forwards a sampling or roots request a middleware
+/// builds — it just will not put the warning in everyone else's build to do it;
+/// a middleware that wants one depends on `rmcp` directly and owns the choice.
+pub use rmcp::model::{
+    ClientCapabilities, ElicitRequest, ElicitRequestParams, ElicitResult, ElicitationAction,
+    ElicitationSchema, InputRequest, InputRequests, InputRequiredResult, InputResponses,
+    ProtocolVersion, RequestMetaObject,
+};
+
+/// Seal and verify an MRTR `requestState` so an echoed value cannot be forged.
+///
+/// Available with the `request-state` feature, which forwards `rmcp`'s. A
+/// middleware that lets `requestState` influence authorization or resource
+/// access is required by SEP-2322 to verify its integrity first; this is the
+/// tool for that.
+#[cfg(feature = "request-state")]
+pub use rmcp::model::{RequestStateCodec, SealOptions};
 
 /// Internal-test access point: not a stable surface, do not use from
 /// downstream crates. Re-exported only so the integration-test crate can
@@ -119,19 +175,57 @@ pub mod __test_internal {
     /// `hyper-util` as a dev-dependency (it is already a main dep).
     pub use hyper_util::rt::TokioIo;
 
+    /// How brontes lowers a flag's JSON value into argv. Re-exported so the
+    /// integration test crate can drive [`render_flag_argv`] across every
+    /// rendering mode, including the `ArgAction::Count` repetition form.
+    pub use crate::schema::FlagRender;
+
+    /// Render the argv for a tool call the way `mcp start` / `mcp stream` do,
+    /// deriving the per-flag render kinds from a real walk of `root`.
+    ///
+    /// [`render_flag_argv`] proves the renderer behaves once told how to render;
+    /// this proves the walk tells it correctly — the `clap::ArgAction` →
+    /// [`FlagRender`] → argv chain end to end, short only of the spawn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Config`] when the walk rejects `cfg`, or when
+    /// `tool_name` is not in the generated tool list.
+    pub fn render_tool_argv(
+        root: &clap::Command,
+        cfg: &crate::Config,
+        tool_name: &str,
+        input: &crate::ToolInput,
+    ) -> crate::Result<Vec<String>> {
+        let resolved = crate::command::generate_tools_with_middleware(root, cfg)?;
+        let tool = resolved
+            .iter()
+            .find(|r| r.tool.name == tool_name)
+            .ok_or_else(|| {
+                crate::Error::Config(format!("render_tool_argv: no such tool {tool_name:?}"))
+            })?;
+        Ok(crate::exec::build_command_args(
+            tool_name,
+            input,
+            &tool.flag_specs,
+        ))
+    }
+
     /// Drive the same flag-rendering logic that `mcp start` / `mcp stream`
     /// use when translating a tool call's JSON `flags` map into argv.
     ///
     /// The integration test crate uses this to assert that the
-    /// nested-non-scalar `tracing::warn!` events fire as documented.
+    /// nested-non-scalar and count-flag `tracing::warn!` events fire as
+    /// documented.
     #[must_use]
     pub fn render_flag_argv(
         flag_name: &str,
         value: &serde_json::Value,
+        render: FlagRender,
         tool_name: &str,
     ) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        crate::exec::append_flag_for_test(&mut out, flag_name, value, tool_name);
+        crate::exec::append_flag_for_test(&mut out, flag_name, value, render, tool_name);
         out
     }
 

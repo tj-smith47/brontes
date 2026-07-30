@@ -17,10 +17,13 @@
 pub mod args;
 pub mod cache;
 pub mod flag;
+pub mod promote;
 pub mod types;
 
+pub use flag::{FlagRender, FlagSpec};
 pub use types::SchemaType;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use clap::Command;
@@ -29,6 +32,20 @@ use serde_json::Value;
 
 use crate::config::Config;
 use crate::selector::FlagMatcher;
+
+/// One command's input surface: what clients are told, and what brontes needs
+/// when a call on it arrives.
+#[derive(Debug)]
+pub struct InputSurface {
+    /// The tool's JSON Schema, ready for `rmcp::model::Tool::input_schema`.
+    pub schema: Arc<JsonObject>,
+    /// Execution metadata the schema cannot express — how each flag lowers into
+    /// argv, and which flag names the tool accepts at all.
+    pub flag_specs: BTreeMap<String, FlagSpec>,
+    /// Flags hoisted to top-level properties by [`Config::promote_flag`], which
+    /// the call path folds back into `flags` before running the command.
+    pub promoted_flags: BTreeSet<String>,
+}
 
 /// Build the per-tool input schema for `cmd`, applying optional selector
 /// flag matchers.
@@ -41,33 +58,36 @@ use crate::selector::FlagMatcher;
 /// the `flags` and `args` property objects are then populated with per-flag
 /// JSON Schema entries and the positional-args description respectively.
 ///
-/// The returned `JsonObject` is wrapped in [`Arc`] for direct assignment to
-/// `rmcp::model::Tool::input_schema`.
+/// # Errors
+///
+/// Returns [`crate::Error::Config`] when a promoted flag cannot carry an
+/// `x-mcp-header` — advertising an annotation the peer would reject is worse
+/// than refusing to start.
 pub fn build_input_schema_with_matchers(
     cmd: &Command,
     cfg: &Config,
     cmd_path: &str,
     local_flag: Option<&FlagMatcher>,
     inherited_flag: Option<&FlagMatcher>,
-) -> Arc<JsonObject> {
+) -> crate::Result<InputSurface> {
     let mut schema = cache::fresh_tool_input_schema();
+    let mut flags = flag::build_flags_schema(cmd, cfg, cmd_path, local_flag, inherited_flag);
+    let promoted = promote::take_promoted(&mut flags, cfg, cmd_path)?;
 
     if let Some(Value::Object(properties_root)) = schema.get_mut("properties") {
         if let Some(Value::Object(flags_obj)) = properties_root.get_mut("flags") {
-            let (properties, required) =
-                flag::build_flags_schema(cmd, cfg, cmd_path, local_flag, inherited_flag);
-
             // Replace the schemars-emitted generic shape with brontes's
-            // per-flag concrete object.  `additionalProperties: false` means
-            // the MCP layer will reject any unknown flag name before it
-            // reaches the spawned CLI process.
+            // per-flag concrete object.  `additionalProperties: false` is
+            // enforced by `BrontesServer::call_tool` against the same
+            // `FlagSpec` map returned here — no MCP layer validates tool-call
+            // arguments against the advertised schema.
             flags_obj.clear();
             flags_obj.insert("type".into(), Value::String("object".into()));
-            flags_obj.insert("properties".into(), Value::Object(properties));
-            if !required.is_empty() {
+            flags_obj.insert("properties".into(), Value::Object(flags.properties.clone()));
+            if !flags.required.is_empty() {
                 flags_obj.insert(
                     "required".into(),
-                    Value::Array(required.into_iter().map(Value::String).collect()),
+                    Value::Array(flags.required.iter().cloned().map(Value::String).collect()),
                 );
             }
             flags_obj.insert("additionalProperties".into(), Value::Bool(false));
@@ -79,9 +99,28 @@ pub fn build_input_schema_with_matchers(
                 Value::String(args::args_description(cmd)),
             );
         }
+
+        // Promoted flags sit beside `flags` and `args`, which is the only
+        // placement rmcp reads `x-mcp-header` from.
+        for (name, prop) in promoted.properties {
+            properties_root.insert(name, prop);
+        }
     }
 
-    Arc::new(schema)
+    if !promoted.required.is_empty() {
+        let required = schema
+            .entry("required")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(list) = required {
+            list.extend(promoted.required.into_iter().map(Value::String));
+        }
+    }
+
+    Ok(InputSurface {
+        schema: Arc::new(schema),
+        flag_specs: flags.specs,
+        promoted_flags: promoted.names,
+    })
 }
 
 /// Build the per-tool output schema.
@@ -168,7 +207,9 @@ mod tests {
     fn input_schema_has_flags_and_args_properties() {
         let cmd = Command::new("test").arg(Arg::new("foo").long("foo"));
         let cfg = Config::default();
-        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None)
+            .expect("schema")
+            .schema;
         let props = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -181,7 +222,9 @@ mod tests {
     fn input_schema_flags_object_has_per_flag_property() {
         let cmd = Command::new("test").arg(Arg::new("foo").long("foo"));
         let cfg = Config::default();
-        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None)
+            .expect("schema")
+            .schema;
         let flags_props = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -200,7 +243,9 @@ mod tests {
     fn input_schema_flags_object_is_additional_properties_false() {
         let cmd = Command::new("test").arg(Arg::new("foo").long("foo"));
         let cfg = Config::default();
-        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None)
+            .expect("schema")
+            .schema;
         let flags_obj = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -240,7 +285,9 @@ mod tests {
     fn args_description_is_spliced_into_args_property() {
         let cmd = Command::new("test").arg(Arg::new("file").required(true));
         let cfg = Config::default();
-        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None);
+        let schema = build_input_schema_with_matchers(&cmd, &cfg, "test", None, None)
+            .expect("schema")
+            .schema;
         let args_desc = schema
             .get("properties")
             .and_then(|v| v.as_object())

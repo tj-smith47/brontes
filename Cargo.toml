@@ -34,7 +34,7 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "string", "wrap_help"] }
-rmcp = { version = "2.2", features = [
+rmcp = { version = "3.0", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",
@@ -80,15 +80,26 @@ http-body-util = "0.1"
 # call it directly without the heavier `tower` builder layers.
 tower-service = "0.3"
 
+[features]
+default = []
+# Forward `rmcp/request-state` and re-export `RequestStateCodec`, for middleware
+# that puts meaningful state in an MRTR `requestState` and therefore has to
+# verify its integrity when the client echoes it back.
+request-state = ["rmcp/request-state"]
+
 [dev-dependencies]
 pretty_assertions = "1"
 tokio = { version = "1", features = ["full"] }
-rmcp = { version = "2.2", features = [
+rmcp = { version = "3.0", features = [
     "server",
     "client",
     "transport-io",
     "transport-streamable-http-server",
     "schemars",
+    # The MRTR round-trip tests need a client peer that can declare the
+    # elicitation capability and answer an elicitation request.
+    "elicitation",
+    "request-state",
 ] }
 # Smoke-test the streamable-HTTP transport by POSTing real HTTP/1.1 to a
 # bound port. `reqwest` is rmcp's chosen smoke-test client and is already
@@ -109,6 +120,13 @@ module_name_repetitions = "allow"
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[test]]
+name = "trace_propagation_e2e"
+# The binary is both the MCP server and the CLI brontes spawns as its child
+# (`current_exe` inside an integration test is the test binary), so it needs to
+# own `main` and dispatch on argv rather than run under libtest.
+harness = false
 
 [[example]]
 name = "make-mcp"

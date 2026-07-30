@@ -48,7 +48,16 @@ impl rmcp::handler::client::ClientHandler for NoopClient {
 fn fixture_cli() -> Command {
     Command::new("brontes-mw")
         .version("0.0.1")
-        .subcommand(Command::new("greet").about("Say hi"))
+        .subcommand(
+            Command::new("greet").about("Say hi").arg(
+                // Declared because `call_tool` enforces the input schema's
+                // `additionalProperties: false` on `flags`: a flag the command
+                // does not expose is rejected before any middleware runs.
+                clap::Arg::new("verbose")
+                    .long("verbose")
+                    .action(clap::ArgAction::SetTrue),
+            ),
+        )
         .subcommand(Command::new("safe-greet").about("Recovery target — no panic"))
 }
 
@@ -198,7 +207,8 @@ async fn middleware_ctx_carries_tool_name_input_and_token() {
                 stdout: "captured\n".into(),
                 stderr: String::new(),
                 exit_code: 0,
-            })
+            }
+            .into())
         })
     });
 
@@ -261,7 +271,8 @@ async fn middleware_panic_returns_tool_error_and_server_survives() {
                 stdout: "recovered\n".into(),
                 stderr: String::new(),
                 exit_code: 0,
-            })
+            }
+            .into())
         })
     });
 
@@ -353,7 +364,8 @@ async fn middleware_timeout_returns_promptly() {
                     stdout: "unexpected".into(),
                     stderr: String::new(),
                     exit_code: 0,
-                }),
+                }
+                .into()),
                 Err(_elapsed) => Err(brontes::Error::Io {
                     context: "middleware timeout after 100ms".into(),
                     source: std::io::Error::new(

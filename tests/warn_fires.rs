@@ -43,6 +43,7 @@
 
 mod support;
 
+use brontes::__test_internal::FlagRender;
 use brontes::{Config, Selector, selectors};
 use clap::Command;
 use serde_json::json;
@@ -119,8 +120,9 @@ fn flag_object_with_nested_object_warns() {
     // value; skipping" warn. The remaining scalar pair (none in this case)
     // is rendered; here every pair is skipped so argv is empty.
     let value = json!({"k": {"nested": "object"}});
-    let (argv, captured) =
-        capture_warns(|| brontes::__test_internal::render_flag_argv("label", &value, "myapp_sub"));
+    let (argv, captured) = capture_warns(|| {
+        brontes::__test_internal::render_flag_argv("label", &value, FlagRender::Value, "myapp_sub")
+    });
     assert!(
         argv.is_empty(),
         "nested-object value must be skipped; argv = {argv:?}"
@@ -141,8 +143,9 @@ fn flag_object_with_nested_object_warns() {
 fn flag_object_with_nested_array_warns() {
     // Same code path, array-valued inner pair.
     let value = json!({"items": ["a", "b"]});
-    let (argv, captured) =
-        capture_warns(|| brontes::__test_internal::render_flag_argv("label", &value, "myapp_sub"));
+    let (argv, captured) = capture_warns(|| {
+        brontes::__test_internal::render_flag_argv("label", &value, FlagRender::Value, "myapp_sub")
+    });
     assert!(
         argv.is_empty(),
         "nested-array value must be skipped; argv = {argv:?}"
@@ -165,8 +168,9 @@ fn flag_array_with_nested_object_warns() {
     // "nested non-scalar flag value; skipping" warn from
     // `append_scalar_flag`.
     let value = json!(["scalar", {"x": 1}]);
-    let (argv, captured) =
-        capture_warns(|| brontes::__test_internal::render_flag_argv("tag", &value, "myapp_sub"));
+    let (argv, captured) = capture_warns(|| {
+        brontes::__test_internal::render_flag_argv("tag", &value, FlagRender::Value, "myapp_sub")
+    });
     assert_eq!(
         argv,
         vec!["--tag".to_string(), "scalar".to_string()],
@@ -186,8 +190,9 @@ fn flag_array_with_nested_object_warns() {
 #[test]
 fn flag_array_with_nested_array_warns() {
     let value = json!([["nested"], "scalar"]);
-    let (argv, captured) =
-        capture_warns(|| brontes::__test_internal::render_flag_argv("tag", &value, "myapp_sub"));
+    let (argv, captured) = capture_warns(|| {
+        brontes::__test_internal::render_flag_argv("tag", &value, FlagRender::Value, "myapp_sub")
+    });
     assert_eq!(
         argv,
         vec!["--tag".to_string(), "scalar".to_string()],
@@ -208,8 +213,9 @@ fn flag_array_with_nested_array_warns() {
 fn flag_object_all_scalar_pairs_no_warn() {
     // Negative test: scalar-only object map must NOT trip the warn.
     let value = json!({"env": "prod", "version": 7});
-    let (argv, captured) =
-        capture_warns(|| brontes::__test_internal::render_flag_argv("label", &value, "myapp_sub"));
+    let (argv, captured) = capture_warns(|| {
+        brontes::__test_internal::render_flag_argv("label", &value, FlagRender::Value, "myapp_sub")
+    });
     // Two pairs, two `--label` flags.
     assert_eq!(count_occurrences(&format!("{argv:?}"), "--label"), 2);
     assert!(
@@ -311,6 +317,66 @@ fn selector_substring_matching_no_warn() {
     assert!(
         !captured.contains("Selector substring matches no walked command path"),
         "matching substring must not warn; captured: {captured}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Inert `x-mcp-header` in a flag schema override
+// ---------------------------------------------------------------------------
+
+#[test]
+fn x_mcp_header_in_flag_schema_warns() {
+    // SEP-2243 header promotion reads only top-level primitive properties of
+    // a tool's input schema. brontes puts every flag under `flags`, so the
+    // annotation does nothing — a silent no-op is the failure mode this warn
+    // exists to prevent.
+    let root = Command::new("myapp").subcommand(
+        Command::new("deploy")
+            .about("Deploy")
+            .arg(clap::Arg::new("region").long("region")),
+    );
+
+    let cfg = Config::default().flag_schema(
+        "myapp deploy",
+        "region",
+        serde_json::json!({"type": "string", "x-mcp-header": "Region"}),
+    );
+
+    let (_tools, captured) = capture_warns(|| {
+        brontes::generate_tools(&root, &cfg).expect("generate_tools succeeds (warn is non-fatal)")
+    });
+
+    assert_contains_all(
+        &captured,
+        &[
+            "WARN",
+            "x-mcp-header in a flag schema override has no effect",
+            "command=myapp deploy",
+            "flag=region",
+        ],
+    );
+}
+
+#[test]
+fn flag_schema_without_x_mcp_header_does_not_warn() {
+    let root = Command::new("myapp").subcommand(
+        Command::new("deploy")
+            .about("Deploy")
+            .arg(clap::Arg::new("region").long("region")),
+    );
+
+    let cfg = Config::default().flag_schema(
+        "myapp deploy",
+        "region",
+        serde_json::json!({"type": "string", "enum": ["us", "eu"]}),
+    );
+
+    let (_tools, captured) =
+        capture_warns(|| brontes::generate_tools(&root, &cfg).expect("generate_tools succeeds"));
+
+    assert!(
+        !captured.contains("x-mcp-header"),
+        "an ordinary flag schema override must not warn; captured: {captured}"
     );
 }
 

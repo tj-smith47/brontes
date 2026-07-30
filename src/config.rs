@@ -20,8 +20,10 @@
 //!     .log_level(tracing::Level::DEBUG);
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Duration;
 
+use rmcp::model::CacheScope;
 use serde_json::Value;
 use tracing::Level;
 
@@ -152,6 +154,15 @@ pub struct Config {
     /// `(command_path, flag_name)`.
     pub flag_type_overrides: HashMap<(String, String), SchemaType>,
 
+    /// Flags promoted out of `flags` to a top-level input-schema property
+    /// carrying SEP-2243's `x-mcp-header`, keyed by `(command_path,
+    /// flag_name)` with the header suffix as the value.
+    ///
+    /// Ordered rather than hashed so a configuration error names the same
+    /// offending flag on every run. Set through [`Config::promote_flag`] or
+    /// [`Config::promote_flag_as`].
+    pub promoted_flags: BTreeMap<(String, String), String>,
+
     /// Logging level for the MCP server's tracing subscriber.
     ///
     /// `None` falls through to `RUST_LOG`, then to `INFO`.  The `--log-level`
@@ -185,9 +196,80 @@ pub struct Config {
     /// command.  Use this to surface LLM-specific guidance that doesn't
     /// belong in the CLI's `--help` output.
     pub descriptions: HashMap<String, String>,
+
+    /// Freshness hint on brontes' cacheable results (`ttlMs`, SEP-2549) —
+    /// `tools/list` and `server/discover`.
+    ///
+    /// `None` uses [`Config::DEFAULT_CACHE_TTL`].  Set [`Duration::ZERO`] to
+    /// tell clients not to cache those results at all.
+    pub cache_ttl: Option<Duration>,
+
+    /// Who may cache brontes' cacheable results (`cacheScope`, SEP-2549).
+    ///
+    /// `None` uses [`Config::DEFAULT_CACHE_SCOPE`].
+    pub cache_scope: Option<CacheScope>,
+
+    /// Whether to lower a request's W3C Trace Context onto the spawned CLI's
+    /// environment (SEP-414).
+    ///
+    /// `None` uses [`Config::DEFAULT_PROPAGATE_TRACE_CONTEXT`].  See
+    /// [`Config::propagate_trace_context`].
+    pub propagate_trace_context: Option<bool>,
 }
 
 impl Config {
+    /// Default freshness hint for cacheable results: five minutes.
+    ///
+    /// A brontes tool list is walked once at server construction from an
+    /// immutable clap tree, so it cannot change while the server runs — a
+    /// non-zero TTL is always honest.  Five minutes is short enough that a
+    /// consumer who rebuilds and restarts their CLI sees the new tool list
+    /// promptly, and long enough to stop clients re-listing on every turn.
+    pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(300);
+
+    /// Default cache scope for cacheable results: [`CacheScope::Public`].
+    ///
+    /// `Public` is accurate rather than optimistic: [`Config`] is frozen when
+    /// the server is constructed and the walk depends on nothing per-client,
+    /// so every client of a given brontes server receives a byte-identical
+    /// tool list.  A shared intermediary therefore cannot serve one client's
+    /// list to another client and be wrong.  Any future feature that varies
+    /// the tool list per request breaks that invariant and must revisit this
+    /// default; consumers who front brontes with a caching proxy across trust
+    /// boundaries can narrow it via [`Config::cache_scope`].
+    pub const DEFAULT_CACHE_SCOPE: CacheScope = CacheScope::Public;
+
+    /// Resolve the effective freshness hint in milliseconds.
+    ///
+    /// Saturates at [`u64::MAX`] so an absurd [`Duration`] cannot wrap.
+    #[must_use]
+    pub fn resolved_cache_ttl_ms(&self) -> u64 {
+        let ttl = self.cache_ttl.unwrap_or(Self::DEFAULT_CACHE_TTL);
+        u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Resolve the effective cache scope.
+    #[must_use]
+    pub fn resolved_cache_scope(&self) -> CacheScope {
+        self.cache_scope.unwrap_or(Self::DEFAULT_CACHE_SCOPE)
+    }
+
+    /// Trace-context propagation is on by default.
+    ///
+    /// The propagated values only exist when the client actually sends them,
+    /// so a client that carries no trace changes nothing about the spawned
+    /// process.  On for a traced client is what makes the feature zero-config;
+    /// off by default would mean every consumer discovers a broken trace and
+    /// then discovers the flag.
+    pub const DEFAULT_PROPAGATE_TRACE_CONTEXT: bool = true;
+
+    /// Resolve whether trace context propagates into the spawned CLI.
+    #[must_use]
+    pub fn resolved_propagate_trace_context(&self) -> bool {
+        self.propagate_trace_context
+            .unwrap_or(Self::DEFAULT_PROPAGATE_TRACE_CONTEXT)
+    }
+
     /// Set the subcommand name brontes registers on the CLI.
     ///
     /// The name defaults to `"mcp"` when not set.  Use this when your CLI
@@ -301,6 +383,12 @@ impl Config {
     /// long flag name (without the leading `--`).  The provided `schema` value
     /// is used as-is; auto default/required/enum extraction is skipped.
     ///
+    /// One key does not belong here: SEP-2243's `x-mcp-header` is honored only
+    /// on top-level properties of a tool's input schema, and a `flag_schemas`
+    /// entry always lands nested under `flags`.  Use [`Config::promote_flag`],
+    /// which hoists the flag to the top level where the annotation works; a
+    /// schema carrying the key directly logs a warning from `generate_tools`.
+    ///
     /// ```rust
     /// use brontes::Config;
     ///
@@ -344,6 +432,85 @@ impl Config {
     ) -> Self {
         self.flag_type_overrides
             .insert((cmd_path.into(), flag.into()), ty);
+        self
+    }
+
+    /// Promote a flag to a SEP-2243 `Mcp-Param-*` HTTP header, deriving the
+    /// header suffix from the flag name.
+    ///
+    /// The flag moves out of the tool's `flags` object and becomes a top-level
+    /// property of the input schema — the only place the `x-mcp-header`
+    /// annotation is honored — so a streamable-HTTP client mirrors its value
+    /// into `Mcp-Param-<flag>` and intermediaries can route on it without
+    /// parsing the body. brontes folds the value back into `flags` before
+    /// running the command, so the CLI is invoked identically either way.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// // `--region` moves to the top level and rides in `Mcp-Param-region`.
+    /// let cfg = Config::default().promote_flag("my-cli deploy", "region");
+    /// assert_eq!(
+    ///     cfg.promoted_flags.get(&("my-cli deploy".into(), "region".into())),
+    ///     Some(&"region".to_string()),
+    /// );
+    /// ```
+    ///
+    /// # This changes the tool's wire shape
+    ///
+    /// The promoted flag is no longer accepted under `flags`, because a value
+    /// present in two places is a value two clients can disagree about. Callers
+    /// follow the advertised schema, so conforming clients adapt on their own —
+    /// but anything hand-writing the old shape for this one flag must be
+    /// updated.
+    ///
+    /// # Requirements
+    ///
+    /// Enforced by `generate_tools`, which fails rather than advertising an
+    /// annotation the peer would reject:
+    ///
+    /// - the command path and flag must exist;
+    /// - the derived header must be a valid RFC 9110 token (alphanumerics and
+    ///   ``!#$%&'*+-.^_`|~``) — use [`Config::promote_flag_as`] when the flag
+    ///   name is not one;
+    /// - header names must be unique per command, case-insensitively;
+    /// - the flag's schema type must be `string`, `integer`, or `boolean`;
+    /// - the flag may not be named `flags` or `args`, which are already
+    ///   top-level properties.
+    #[must_use]
+    pub fn promote_flag(self, cmd_path: impl Into<String>, flag: impl Into<String>) -> Self {
+        let flag = flag.into();
+        let header = flag.clone();
+        self.promote_flag_as(cmd_path, flag, header)
+    }
+
+    /// Promote a flag to a SEP-2243 `Mcp-Param-*` header under an explicit
+    /// header name.
+    ///
+    /// Identical to [`Config::promote_flag`] except that the header suffix is
+    /// given rather than derived — for a flag name that is not a valid HTTP
+    /// token, or when the header has to match a name an intermediary already
+    /// routes on.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// // The flag is `--api.key`; the header must be `Mcp-Param-Api-Key`.
+    /// let cfg = Config::default().promote_flag_as("my-cli deploy", "api.key", "Api-Key");
+    /// assert_eq!(
+    ///     cfg.promoted_flags.get(&("my-cli deploy".into(), "api.key".into())),
+    ///     Some(&"Api-Key".to_string()),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn promote_flag_as(
+        mut self,
+        cmd_path: impl Into<String>,
+        flag: impl Into<String>,
+        header: impl Into<String>,
+    ) -> Self {
+        self.promoted_flags
+            .insert((cmd_path.into(), flag.into()), header.into());
         self
     }
 
@@ -478,6 +645,66 @@ impl Config {
         self.descriptions.insert(cmd_path.into(), text.into());
         self
     }
+
+    /// Set the freshness hint on `tools/list` and `server/discover` results.
+    ///
+    /// Defaults to [`Config::DEFAULT_CACHE_TTL`].  [`Duration::ZERO`]
+    /// tells clients the tool list must not be cached.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().cache_ttl(Duration::from_secs(30));
+    /// assert_eq!(cfg.resolved_cache_ttl_ms(), 30_000);
+    /// ```
+    #[must_use]
+    pub const fn cache_ttl(mut self, ttl: Duration) -> Self {
+        self.cache_ttl = Some(ttl);
+        self
+    }
+
+    /// Set who may cache `tools/list` and `server/discover` results.
+    ///
+    /// Defaults to [`Config::DEFAULT_CACHE_SCOPE`].  Narrow this to
+    /// [`CacheScope::Private`] when a shared caching intermediary sits between
+    /// brontes and clients in different trust domains.
+    ///
+    /// ```rust
+    /// use brontes::{CacheScope, Config};
+    ///
+    /// let cfg = Config::default().cache_scope(CacheScope::Private);
+    /// assert_eq!(cfg.resolved_cache_scope(), CacheScope::Private);
+    /// ```
+    #[must_use]
+    pub const fn cache_scope(mut self, scope: CacheScope) -> Self {
+        self.cache_scope = Some(scope);
+        self
+    }
+
+    /// Turn W3C Trace Context propagation on or off.
+    ///
+    /// When on (the default, [`Config::DEFAULT_PROPAGATE_TRACE_CONTEXT`]), a
+    /// request's `_meta` `traceparent` / `tracestate` / `baggage` (SEP-414) are
+    /// validated and lowered onto the spawned CLI's `TRACEPARENT` /
+    /// `TRACESTATE` / `BAGGAGE` environment variables, so an instrumented CLI
+    /// joins the calling agent's trace.  The values are also readable from
+    /// [`crate::MiddlewareCtx::trace_context`] whether or not propagation is on.
+    ///
+    /// Turn it off when the wrapped CLI must not observe the caller's trace —
+    /// for example when its own tracing setup would misread those variables.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().propagate_trace_context(false);
+    /// assert!(!cfg.resolved_propagate_trace_context());
+    /// ```
+    #[must_use]
+    pub const fn propagate_trace_context(mut self, propagate: bool) -> Self {
+        self.propagate_trace_context = Some(propagate);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -499,6 +726,38 @@ mod tests {
         assert!(cfg.flag_type_overrides.is_empty());
         assert!(cfg.log_level.is_none());
         assert!(cfg.implementation.is_none());
+        assert!(cfg.cache_ttl.is_none());
+        assert!(cfg.cache_scope.is_none());
+    }
+
+    #[test]
+    fn unset_cache_hints_resolve_to_the_documented_defaults() {
+        let cfg = Config::default();
+        assert_eq!(cfg.resolved_cache_ttl_ms(), 300_000);
+        assert_eq!(cfg.resolved_cache_scope(), CacheScope::Public);
+    }
+
+    #[test]
+    fn cache_hint_overrides_win_over_defaults() {
+        let cfg = Config::default()
+            .cache_ttl(Duration::from_millis(1_500))
+            .cache_scope(CacheScope::Private);
+        assert_eq!(cfg.resolved_cache_ttl_ms(), 1_500);
+        assert_eq!(cfg.resolved_cache_scope(), CacheScope::Private);
+    }
+
+    #[test]
+    fn zero_ttl_is_preserved_rather_than_treated_as_unset() {
+        // `Duration::ZERO` is a meaningful hint ("do not cache"), so it must
+        // not collapse back to the five-minute default.
+        let cfg = Config::default().cache_ttl(Duration::ZERO);
+        assert_eq!(cfg.resolved_cache_ttl_ms(), 0);
+    }
+
+    #[test]
+    fn absurd_ttl_saturates_instead_of_wrapping() {
+        let cfg = Config::default().cache_ttl(Duration::MAX);
+        assert_eq!(cfg.resolved_cache_ttl_ms(), u64::MAX);
     }
 
     #[test]

@@ -37,13 +37,14 @@
 //! }
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use clap::Command;
 use rmcp::model::Tool;
 
 use crate::Result;
 use crate::config::Config;
+use crate::schema::FlagSpec;
 use crate::selector::{FlagMatcher, Middleware};
 
 /// A walked-and-filtered command paired with the runtime data the MCP server
@@ -69,6 +70,19 @@ pub struct ResolvedTool {
     /// underlying CLI command failed. Argv construction lives in
     /// [`crate::exec::build_command_args`] which keys off the MCP tool name.
     pub command_path: String,
+    /// Per-flag execution metadata for this tool, keyed by flag name.
+    ///
+    /// Doubles as the authoritative set of flag names the tool accepts: the
+    /// input schema advertises `additionalProperties: false` on `flags`, and
+    /// this map is what `call_tool` checks that promise against.
+    pub flag_specs: BTreeMap<String, FlagSpec>,
+    /// Flags this tool promotes to top-level input-schema properties carrying
+    /// SEP-2243's `x-mcp-header` (see [`Config::promote_flag`]).
+    ///
+    /// A promoted flag arrives beside `flags` rather than inside it, so
+    /// `call_tool` folds these names back in before deserializing — the CLI is
+    /// invoked identically whether or not a flag was promoted.
+    pub promoted_flags: BTreeSet<String>,
 }
 
 /// Walk `root`, apply safety filters, apply first-match-wins selectors,
@@ -190,13 +204,13 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
             matched_selector.and_then(|s| s.inherited_flag.as_ref());
         let middleware: Option<Middleware> = matched_selector.and_then(|s| s.middleware.clone());
 
-        let input_schema = crate::schema::build_input_schema_with_matchers(
+        let surface = crate::schema::build_input_schema_with_matchers(
             entry.cmd,
             cfg,
             &entry.path,
             local_flag,
             inherited_flag,
-        );
+        )?;
         let output_schema = crate::schema::build_output_schema();
         let description = crate::schema::build_description(entry.cmd, cfg, &entry.path);
 
@@ -205,13 +219,15 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
             .get(&entry.path)
             .and_then(crate::annotations::ToolAnnotations::to_rmcp);
 
-        let mut tool = Tool::new(tool_name, description, input_schema);
+        let mut tool = Tool::new(tool_name, description, surface.schema);
         tool.output_schema = Some(output_schema);
         tool.annotations = annotations;
         tools.push(ResolvedTool {
             tool,
             middleware,
             command_path: entry.path.clone(),
+            flag_specs: surface.flag_specs,
+            promoted_flags: surface.promoted_flags,
         });
     }
 
@@ -273,9 +289,30 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
     }
 
     // flag_schemas: both the path and the flag name must exist.
-    for (path, flag) in cfg.flag_schemas.keys() {
+    for ((path, flag), schema) in &cfg.flag_schemas {
         validate_flag_path(resolved, &valid_paths, path, flag, "flag_schemas")?;
+        // A `flag_schemas` entry always lands nested under `flags`, and rmcp
+        // rejects `x-mcp-header` anywhere but the top level. The key does
+        // nothing here — `Config::promote_flag` is the surface that hoists the
+        // flag to where the annotation is read.
+        if schema.get("x-mcp-header").is_some() {
+            tracing::warn!(
+                target: "brontes::command",
+                command = %path,
+                flag = %flag,
+                "x-mcp-header in a flag schema override has no effect: it is honored \
+                 only on top-level properties; use Config::promote_flag to hoist the \
+                 flag out of the `flags` object"
+            );
+        }
     }
+
+    // promoted_flags: the path and flag must exist, and the header name must be
+    // one an HTTP peer will accept.
+    for (path, flag) in cfg.promoted_flags.keys() {
+        validate_flag_path(resolved, &valid_paths, path, flag, "promoted_flags")?;
+    }
+    crate::schema::promote::validate_header_names(cfg)?;
 
     // flag_type_overrides: same validation.
     for (path, flag) in cfg.flag_type_overrides.keys() {

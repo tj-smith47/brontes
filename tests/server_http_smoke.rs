@@ -7,6 +7,10 @@
 //!
 //! Coverage:
 //! - End-to-end HTTP: initialize then tools/list returns the walked tree.
+//!   Retained as the backward-compatibility path — protocol versions before
+//!   `2026-07-28` still handshake and still carry `Mcp-Session-Id`.
+//! - The stateless `2026-07-28` path: a bare `tools/list` with SEP-2243
+//!   standard headers and no handshake, no session id.
 //! - Cancellation: dropping the token cancels the accept loop and the
 //!   serve future resolves within the 5-second `SHUTDOWN_GRACE`.
 //!
@@ -41,6 +45,37 @@ async fn pick_free_port() -> SocketAddr {
     addr
 }
 
+/// Boot `serve_http` on an ephemeral port and wait for the listener to come
+/// up, so every test below is exercising a running server rather than a
+/// `serve_http` that failed at bind time. Polling a successful TCP connect is
+/// more reliable than a fixed sleep.
+async fn spawn_server() -> (SocketAddr, CancellationToken, tokio::task::JoinHandle<()>) {
+    let addr = pick_free_port().await;
+    let cancel = CancellationToken::new();
+
+    let server_cancel = cancel.clone();
+    let server_task = tokio::spawn(async move {
+        serve_http(
+            fixture_cli(),
+            brontes::Config::default(),
+            addr,
+            server_cancel,
+            vec![],
+        )
+        .await
+        .expect("serve_http");
+    });
+
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    (addr, cancel, server_task)
+}
+
 /// Build an MCP `initialize` JSON-RPC request body.
 const fn initialize_body() -> &'static str {
     r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"brontes-test","version":"0.0.1"}}}"#
@@ -57,9 +92,9 @@ const fn initialized_notification() -> &'static str {
     r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
 }
 
-/// Parse an SSE body assuming rmcp 1.6 / SEP-1699 framing: one priming empty
-/// `data:` line, then exactly one JSON payload `data:` line. If rmcp changes
-/// this framing shape, the assertion below catches it.
+/// Parse an SSE body assuming SEP-1699 framing: one priming empty `data:`
+/// line, then exactly one JSON payload `data:` line. If rmcp changes this
+/// framing shape, the assertion below catches it.
 fn parse_sse_data(body: &str) -> serde_json::Value {
     let payloads: Vec<&str> = body
         .lines()
@@ -78,30 +113,7 @@ fn parse_sse_data(body: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn http_initialize_then_tools_list_returns_walked_tree() {
-    let addr = pick_free_port().await;
-    let cancel = CancellationToken::new();
-
-    let server_cancel = cancel.clone();
-    let server_task = tokio::spawn(async move {
-        serve_http(
-            fixture_cli(),
-            brontes::Config::default(),
-            addr,
-            server_cancel,
-            vec![],
-        )
-        .await
-        .expect("serve_http");
-    });
-
-    // Wait briefly for the listener to bind. Polling a successful TCP
-    // connect is more reliable than a fixed sleep.
-    for _ in 0..50 {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let (addr, cancel, server_task) = spawn_server().await;
 
     let url = format!("http://{addr}/");
     let client = reqwest::Client::new();
@@ -184,33 +196,117 @@ async fn http_initialize_then_tools_list_returns_walked_tree() {
 }
 
 #[tokio::test]
+async fn http_2026_07_28_tools_list_needs_no_handshake_or_session() {
+    let (addr, cancel, server_task) = spawn_server().await;
+
+    let url = format!("http://{addr}/");
+    let client = reqwest::Client::new();
+
+    // A single POST, no `initialize` and no `Mcp-Session-Id`: SEP-2567
+    // removed protocol-level sessions and SEP-2575 removed the handshake.
+    // SEP-2243 requires `Mcp-Method` to agree with the body's method for any
+    // request declaring 2026-07-28 (`Mcp-Name` applies only to methods that
+    // name a target, which `tools/list` does not).
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "tools/list")
+        .body(tools_list_body(1))
+        .send()
+        .await
+        .expect("stateless tools/list send");
+
+    assert_eq!(
+        resp.status(),
+        200,
+        "a bare 2026-07-28 tools/list must be served without a handshake"
+    );
+    assert!(
+        resp.headers().get("mcp-session-id").is_none(),
+        "2026-07-28 is always stateless; the server must not mint a session id"
+    );
+
+    let body_text = resp.text().await.expect("read stateless body");
+    let json = parse_sse_data(&body_text);
+    assert!(
+        json["error"].is_null(),
+        "stateless tools/list must not error: {json}"
+    );
+
+    let result = &json["result"];
+    // SEP-2322: every 2026-07-28 result carries a resultType discriminator.
+    assert_eq!(
+        result["resultType"], "complete",
+        "expected a complete result: {json}"
+    );
+    // SEP-2549 cache hints, supplied by brontes rather than rmcp.
+    assert_eq!(result["ttlMs"], 300_000, "missing ttlMs hint: {json}");
+    assert_eq!(
+        result["cacheScope"], "public",
+        "missing cacheScope hint: {json}"
+    );
+
+    let names: Vec<&str> = result["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("tools/list must return an array: {json}"))
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"brontes-http-smoke_greet"),
+        "missing greet tool; got {names:?}"
+    );
+
+    cancel.cancel();
+    let joined = tokio::time::timeout(Duration::from_secs(6), server_task).await;
+    assert!(
+        joined.is_ok(),
+        "server did not exit within 6s of cancellation"
+    );
+}
+
+#[tokio::test]
+async fn http_2026_07_28_rejects_a_mismatched_standard_header() {
+    let (addr, cancel, server_task) = spawn_server().await;
+
+    let url = format!("http://{addr}/");
+    let client = reqwest::Client::new();
+
+    // The silent-failure risk in SEP-2243 is a proxy rewriting the body
+    // without the headers. brontes must surface that as the spec's
+    // HeaderMismatch (-32020), not serve the request anyway.
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "tools/call")
+        .body(tools_list_body(1))
+        .send()
+        .await
+        .expect("mismatched header send");
+
+    let json: serde_json::Value = resp.json().await.expect("error body is JSON");
+    assert_eq!(
+        json["error"]["code"], -32020,
+        "expected HeaderMismatch for a Mcp-Method that disagrees with the body: {json}"
+    );
+
+    cancel.cancel();
+    let joined = tokio::time::timeout(Duration::from_secs(6), server_task).await;
+    assert!(
+        joined.is_ok(),
+        "server did not exit within 6s of cancellation"
+    );
+}
+
+#[tokio::test]
 async fn http_cancellation_tears_down_within_grace_window() {
     // No client traffic; just verify the bare accept loop respects the
     // cancellation token within the 5-second SHUTDOWN_GRACE.
-    let addr = pick_free_port().await;
-    let cancel = CancellationToken::new();
-
-    let server_cancel = cancel.clone();
-    let server_task = tokio::spawn(async move {
-        serve_http(
-            fixture_cli(),
-            brontes::Config::default(),
-            addr,
-            server_cancel,
-            vec![],
-        )
-        .await
-        .expect("serve_http");
-    });
-
-    // Wait for the bind to come up so we know we're testing a running
-    // server (not a serve_http that errored at bind time).
-    for _ in 0..50 {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let (_addr, cancel, server_task) = spawn_server().await;
 
     cancel.cancel();
     let joined = tokio::time::timeout(Duration::from_secs(6), server_task).await;

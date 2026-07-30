@@ -32,9 +32,14 @@ use std::sync::Arc;
 use futures::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
+use rmcp::model::{
+    ClientCapabilities, InputRequiredResult, InputResponses, ProtocolVersion, RequestMetaObject,
+};
+
 use crate::{
     Result,
     tool::{ToolInput, ToolOutput},
+    trace::TraceContext,
 };
 
 /// Match a command by its space-joined path (e.g., `"my-cli sub leaf"`).
@@ -117,14 +122,171 @@ pub struct MiddlewareCtx {
     pub tool_name: String,
     /// Deserialized input for the tool invocation.
     pub input: ToolInput,
+    /// W3C Trace Context the client attached to this request's `_meta`
+    /// (SEP-414), after validation.
+    ///
+    /// Populated regardless of
+    /// [`Config::propagate_trace_context`](crate::Config::propagate_trace_context):
+    /// that setting governs only whether brontes lowers the values onto the
+    /// spawned CLI's environment, never whether middleware can read them.
+    pub trace_context: TraceContext,
+
+    /// The request's `_meta` map, verbatim.
+    ///
+    /// Carries the progress token (`RequestMetaObject::get_progress_token`),
+    /// the client's identity and capabilities under the `2026-07-28` stateless
+    /// revision, and any extension keys the client set. [`MiddlewareCtx`]
+    /// surfaces the resolved forms of the fields brontes itself needs, but the
+    /// raw map is here so a middleware is never blocked on brontes adding an
+    /// accessor.
+    pub meta: RequestMetaObject,
+
+    /// The protocol revision in force for this request, when known.
+    ///
+    /// Resolved through the same path rmcp uses: the request's `_meta` under the
+    /// stateless revision, falling back to the handshake for older peers.
+    /// Returning [`MiddlewareOutcome::InputRequired`] requires `2026-07-28` or
+    /// newer.
+    pub protocol_version: Option<ProtocolVersion>,
+
+    /// What the calling client declared it can do, when known.
+    ///
+    /// Check [`ClientCapabilities::elicitation`] before returning an
+    /// [`InputRequest::Elicitation`](rmcp::model::InputRequest) — a client that
+    /// never declared it cannot answer, and brontes turns the attempt into a
+    /// tool error rather than letting it reach the wire.
+    pub client_capabilities: Option<ClientCapabilities>,
+
+    /// The client's answers to a previous [`MiddlewareOutcome::InputRequired`],
+    /// present only on an MRTR retry (SEP-2322).
+    ///
+    /// Keys match the ones the middleware chose when it built the
+    /// [`InputRequests`](rmcp::model::InputRequests) map. `None` means this is
+    /// a first attempt.
+    pub input_responses: Option<InputResponses>,
+
+    /// The opaque `requestState` echoed back by the client on an MRTR retry.
+    ///
+    /// # This value is untrusted
+    ///
+    /// The client returns whatever it likes here. Per SEP-2322 a server that
+    /// lets `requestState` influence authorization or resource access MUST
+    /// verify its integrity first — seal it with `rmcp`'s `RequestStateCodec`
+    /// (its `request-state` feature) or keep the real state server-side and
+    /// treat this only as a lookup handle.
+    pub request_state: Option<String>,
+}
+
+/// What a middleware chain produced for one tool call.
+///
+/// The exec step only ever produces [`MiddlewareOutcome::Complete`]; a
+/// subprocess has no way to ask the client anything. A middleware may instead
+/// return [`MiddlewareOutcome::InputRequired`] to suspend the call and ask the
+/// client for input first (SEP-2322) — under the stateless `2026-07-28`
+/// revision that is the only channel a server has for reaching its client.
+///
+/// # Retries re-enter the chain from the top
+///
+/// MCP has no "resume" operation: the client answers the input requests and
+/// **re-sends the whole `tools/call`**, with
+/// [`MiddlewareCtx::input_responses`] and [`MiddlewareCtx::request_state`]
+/// populated. A middleware that has already run the exec step before asking
+/// for input will therefore run it again on the retry. That is legitimate for a
+/// read-only or dry-run command and wrong for a destructive one, so brontes
+/// leaves the choice with the middleware rather than guessing: branch on
+/// `ctx.input_responses.is_some()` to tell a retry from a first attempt.
+///
+/// # Example: confirm before a destructive command
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use std::sync::Arc;
+///
+/// use brontes::{
+///     BoxedNext, ElicitRequest, ElicitRequestParams, ElicitResult, ElicitationAction,
+///     ElicitationSchema, InputRequest, InputRequiredResult, InputRequests, Middleware,
+///     MiddlewareCtx, MiddlewareOutcome, ToolOutput,
+/// };
+///
+/// const CONFIRM: &str = "confirm";
+///
+/// let middleware: Middleware = Arc::new(|ctx: MiddlewareCtx, next: BoxedNext| {
+///     Box::pin(async move {
+///         if !ctx.tool_name.ends_with("_destroy") {
+///             return next(ctx).await;
+///         }
+///
+///         // A retry is a fresh call carrying the answers, not a resumption:
+///         // ask on the first attempt, act only once an answer is in.
+///         let Some(answers) = ctx.input_responses.as_ref() else {
+///             let mut requests = InputRequests::new();
+///             requests.insert(
+///                 CONFIRM.to_owned(),
+///                 InputRequest::Elicitation(ElicitRequest::new(
+///                     ElicitRequestParams::FormElicitationParams {
+///                         meta: None,
+///                         message: "Really destroy the environment?".to_owned(),
+///                         requested_schema: ElicitationSchema::new(BTreeMap::new()),
+///                     },
+///                 )),
+///             );
+///             return Ok(InputRequiredResult::new(Some(requests), None).into());
+///         };
+///
+///         let accepted = answers
+///             .get(CONFIRM)
+///             .cloned()
+///             .and_then(|v| serde_json::from_value::<ElicitResult>(v).ok())
+///             .is_some_and(|r| r.action == ElicitationAction::Accept);
+///
+///         if accepted {
+///             next(ctx).await
+///         } else {
+///             Ok(MiddlewareOutcome::Complete(ToolOutput {
+///                 stdout: String::new(),
+///                 stderr: "aborted at the user's request\n".to_owned(),
+///                 exit_code: 1,
+///             }))
+///         }
+///     })
+/// });
+/// ```
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum MiddlewareOutcome {
+    /// The tool call finished; the payload is the process outcome.
+    Complete(ToolOutput),
+
+    /// The call cannot finish until the client fulfills the carried input
+    /// requests and retries (SEP-2322).
+    ///
+    /// Reaching the wire requires a peer on protocol `2026-07-28` or newer, and
+    /// an elicitation request requires the client to have declared the
+    /// elicitation capability. brontes checks both and converts a violation
+    /// into a tool error, so a middleware cannot accidentally emit a result the
+    /// peer is unable to parse.
+    InputRequired(Box<InputRequiredResult>),
+}
+
+impl From<ToolOutput> for MiddlewareOutcome {
+    fn from(output: ToolOutput) -> Self {
+        Self::Complete(output)
+    }
+}
+
+impl From<InputRequiredResult> for MiddlewareOutcome {
+    fn from(result: InputRequiredResult) -> Self {
+        Self::InputRequired(Box::new(result))
+    }
 }
 
 /// What a middleware (and the underlying exec step) ultimately produces.
 ///
 /// Both the success and error paths of a tool invocation flow through this
-/// type. On success the [`ToolOutput`] carries stdout, stderr, and exit code.
-/// On error the crate-level [`crate::Error`] is returned.
-pub type MiddlewareResult = Result<ToolOutput>;
+/// type. On success the [`MiddlewareOutcome`] carries either the process
+/// outcome or an MRTR input request. On error the crate-level [`crate::Error`]
+/// is returned.
+pub type MiddlewareResult = Result<MiddlewareOutcome>;
 
 /// One-shot async callable that runs the wrapped exec step.
 ///

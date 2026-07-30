@@ -4,7 +4,7 @@
 //! dedup, excludes hidden flags, and produces a `(properties, required)`
 //! pair ready to splice into the per-tool input schema.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use clap::{Arg, ArgAction, Command};
 use serde_json::{Map, Value, json};
@@ -12,6 +12,53 @@ use serde_json::{Map, Value, json};
 use crate::config::Config;
 use crate::schema::types::{SchemaType, known_type_classifications};
 use crate::selector::FlagMatcher;
+
+/// How a flag's JSON value lowers into argv.
+///
+/// Derived from the `clap::ArgAction`, never from the advertised JSON Schema
+/// type: `Config::flag_type_override` changes what the model is told, while
+/// this decides what the CLI is actually handed, and the two must not be
+/// conflated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlagRender {
+    /// `--name VALUE`, repeated once per element for an array value.
+    Value,
+    /// `--name` when the value is `true`, omitted when `false`.
+    Boolean,
+    /// `--name` repeated N times for the integer N (`ArgAction::Count`).
+    ///
+    /// A `Count` arg parses with `num_args(0)`, so the otherwise-natural
+    /// `--name N` form is rejected by clap outright.
+    Count,
+}
+
+/// What brontes knows about one exposed flag beyond its JSON Schema.
+#[derive(Debug, Clone)]
+pub struct FlagSpec {
+    /// How to turn this flag's JSON value into argv tokens.
+    pub render: FlagRender,
+}
+
+/// The per-tool flag surface: the JSON Schema clients see, plus the execution
+/// metadata brontes needs when a call arrives.
+#[derive(Debug, Default)]
+pub struct FlagsSchema {
+    /// `flags.properties` for the tool's input schema.
+    pub properties: Map<String, Value>,
+    /// `flags.required` entries.
+    pub required: Vec<String>,
+    /// Execution metadata keyed by flag name, ordered for determinism.
+    pub specs: BTreeMap<String, FlagSpec>,
+}
+
+/// Classify how `arg` must be rendered into argv.
+fn render_kind(arg: &Arg) -> FlagRender {
+    match arg.get_action() {
+        ArgAction::SetTrue | ArgAction::SetFalse => FlagRender::Boolean,
+        ArgAction::Count => FlagRender::Count,
+        _ => FlagRender::Value,
+    }
+}
 
 /// Walk `cmd`'s args (local first, inherited second; dedup by id) and
 /// build a `(properties_map, required_list)` ready to splice into the
@@ -30,9 +77,8 @@ pub fn build_flags_schema(
     cmd_path: &str,
     local_flag: Option<&FlagMatcher>,
     inherited_flag: Option<&FlagMatcher>,
-) -> (Map<String, Value>, Vec<String>) {
-    let mut properties: Map<String, Value> = Map::new();
-    let mut required: Vec<String> = Vec::new();
+) -> FlagsSchema {
+    let mut out = FlagsSchema::default();
 
     // Collect local arg ids for dedup.
     let local_ids: HashSet<&str> = cmd
@@ -46,7 +92,7 @@ pub fn build_flags_schema(
         if local_flag.is_some_and(|m| !m(arg)) {
             continue;
         }
-        process_arg(arg, cfg, cmd_path, &mut properties, &mut required);
+        process_arg(arg, cfg, cmd_path, &mut out);
     }
 
     // Process inherited (global) args, skipping any whose id was already
@@ -58,10 +104,10 @@ pub fn build_flags_schema(
         if inherited_flag.is_some_and(|m| !m(arg)) {
             continue;
         }
-        process_arg(arg, cfg, cmd_path, &mut properties, &mut required);
+        process_arg(arg, cfg, cmd_path, &mut out);
     }
 
-    (properties, required)
+    out
 }
 
 /// Process a single [`Arg`], inserting into `properties` and `required`.
@@ -71,13 +117,7 @@ pub fn build_flags_schema(
 /// through `properties.args` instead). Applies a wholesale `flag_schemas`
 /// override when present; otherwise auto-extracts type, description,
 /// defaults, and enum.
-fn process_arg(
-    arg: &Arg,
-    cfg: &Config,
-    cmd_path: &str,
-    properties: &mut Map<String, Value>,
-    required: &mut Vec<String>,
-) {
+fn process_arg(arg: &Arg, cfg: &Config, cmd_path: &str, out: &mut FlagsSchema) {
     if arg.is_hide_set() {
         return;
     }
@@ -101,12 +141,21 @@ fn process_arg(
 
     let name = arg.get_id().as_str().to_owned();
 
+    // The render kind comes from the arg's action, so it holds even when the
+    // advertised schema is overridden wholesale below.
+    out.specs.insert(
+        name.clone(),
+        FlagSpec {
+            render: render_kind(arg),
+        },
+    );
+
     // Wholesale override via cfg.flag_schemas.
     let key = (cmd_path.to_owned(), name.clone());
     if let Some(override_schema) = cfg.flag_schemas.get(&key) {
-        properties.insert(name.clone(), override_schema.clone());
+        out.properties.insert(name.clone(), override_schema.clone());
         if arg.is_required_set() {
-            required.push(name);
+            out.required.push(name);
         }
         return;
     }
@@ -114,9 +163,9 @@ fn process_arg(
     // Auto-extract the schema for this arg.
     let prop = build_arg_schema(arg, cfg, cmd_path);
     if arg.is_required_set() {
-        required.push(name.clone());
+        out.required.push(name.clone());
     }
-    properties.insert(name, Value::Object(prop));
+    out.properties.insert(name, Value::Object(prop));
 }
 
 /// Build the JSON Schema object for a single arg via auto-extraction.
@@ -320,7 +369,8 @@ mod tests {
     /// Build a single-command fixture and call `build_flags_schema`.
     fn schema_for(cmd: &Command) -> (Map<String, Value>, Vec<String>) {
         let cfg = Config::default();
-        build_flags_schema(cmd, &cfg, "my-cli", None, None)
+        let out = build_flags_schema(cmd, &cfg, "my-cli", None, None);
+        (out.properties, out.required)
     }
 
     fn cmd_with_arg(arg: Arg) -> Command {
@@ -552,7 +602,7 @@ mod tests {
             .expect("sub command");
 
         let cfg = Config::default();
-        let (props, _) = build_flags_schema(sub, &cfg, "my-cli sub", None, None);
+        let props = build_flags_schema(sub, &cfg, "my-cli sub", None, None).properties;
 
         let prop = props.get("log-level").expect("log-level in props");
         assert_eq!(
@@ -576,7 +626,7 @@ mod tests {
                 .value_parser(value_parser!(String)), // would auto-extract as string
         );
 
-        let (props, _) = build_flags_schema(&cmd, &cfg, "my-cli", None, None);
+        let props = build_flags_schema(&cmd, &cfg, "my-cli", None, None).properties;
         let prop = props.get("limit").expect("limit in props");
         assert_eq!(
             *prop,
@@ -605,7 +655,7 @@ mod tests {
                 .value_parser(value_parser!(String)),
         );
 
-        let (props, _) = build_flags_schema(&cmd, &cfg, "my-cli", None, None);
+        let props = build_flags_schema(&cmd, &cfg, "my-cli", None, None).properties;
         let prop = props.get("tags").expect("tags in props");
         assert_eq!(
             prop["type"],
