@@ -345,6 +345,15 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
         }
     }
 
+    // task_modes: path must exist.
+    for path in cfg.task_modes.keys() {
+        if !valid_paths.contains(path.as_str()) {
+            return Err(crate::Error::Config(format!(
+                "Config.task_modes references unknown command path {path:?}"
+            )));
+        }
+    }
+
     // Selector factory captured strings (only introspectable matchers).
     for sel in &cfg.selectors {
         if let Some(matcher) = &sel.cmd
@@ -779,6 +788,22 @@ mod tests {
         assert!(
             matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("description_modes")),
             "expected Config error for unknown description_mode path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_paths_rejects_unknown_task_mode_path() {
+        // A detached command that never matches is the worst kind of typo:
+        // the server starts, advertises the tasks extension, and every call
+        // blocks exactly as it did before.
+        let root = root_with_list();
+        let resolved = crate::walk::walk(&root);
+        let cfg =
+            Config::default().task_mode_for("nonexistent path", crate::config::TaskMode::Detached);
+        let result = validate_paths(&resolved, &cfg);
+        assert!(
+            matches!(&result, Err(crate::Error::Config(msg)) if msg.contains("task_modes")),
+            "expected Config error for unknown task_mode path, got {result:?}"
         );
     }
 

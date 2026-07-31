@@ -23,18 +23,22 @@ use futures::future::BoxFuture;
 use rmcp::ErrorData as McpError;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ClientCapabilities, ContentBlock,
-    DiscoverResult, Implementation, InitializeResult, InputRequest, InputRequiredResult,
-    JsonObject, ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities,
-    ServerInfo, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams, ClientCapabilities,
+    ContentBlock, CreateTaskResult, DiscoverResult, GetTaskParams, GetTaskResult, Implementation,
+    InitializeResult, InputRequest, InputRequiredResult, InputResponses, JsonObject,
+    ListToolsResult, PaginatedRequestParams, ProtocolVersion, RequestMetaObject,
+    ServerCapabilities, ServerInfo, Tool, UpdateTaskParams,
 };
 use rmcp::service::{RequestContext, RoleServer};
+use rmcp::task_manager::{TaskContext, TaskExit, TaskManager, TaskOptions};
+use tokio_util::sync::CancellationToken;
 
 use crate::Config;
 use crate::Result;
 use crate::command::ResolvedTool;
+use crate::config::TaskMode;
 use crate::schema::FlagSpec;
-use crate::selector::{BoxedNext, MiddlewareCtx, MiddlewareOutcome, MiddlewareResult};
+use crate::selector::{BoxedNext, Middleware, MiddlewareCtx, MiddlewareOutcome, MiddlewareResult};
 use crate::tool::{ToolInput, ToolOutput};
 use crate::trace::TraceContext;
 
@@ -63,6 +67,11 @@ pub struct BrontesServer {
     /// Resolved tool list (descriptor + claimed middleware + clap path),
     /// computed once at construction. See type-level docs.
     tools: Vec<ResolvedTool>,
+    /// Store and executor for detached commands (SEP-2663). Present
+    /// unconditionally — it costs an empty map when no command is detached,
+    /// and the `tasks` capability, not this field, is what tells clients the
+    /// extension is live.
+    tasks: TaskManager,
 }
 
 impl BrontesServer {
@@ -88,6 +97,7 @@ impl BrontesServer {
             cli,
             cfg: Arc::new(cfg),
             tools,
+            tasks: TaskManager::new(),
         })
     }
 
@@ -96,10 +106,15 @@ impl BrontesServer {
     ///
     /// `Config.implementation` overrides the default identity (which derives
     /// from `CARGO_PKG_NAME` / `CARGO_PKG_VERSION` at build time of the
-    /// brontes crate). Capability negotiation advertises `tools` only —
-    /// brontes does not (yet) expose prompts, resources, or completions.
+    /// brontes crate). Capability negotiation advertises `tools`, plus the
+    /// `tasks` extension when some command is detached — brontes does not
+    /// expose prompts, resources, or completions.
     fn build_server_info(&self) -> ServerInfo {
-        let capabilities = ServerCapabilities::builder().enable_tools().build();
+        let mut builder = ServerCapabilities::builder().enable_tools();
+        if self.cfg.tasks_enabled() {
+            builder = builder.enable_tasks();
+        }
+        let capabilities = builder.build();
 
         let server_info = self.cfg.implementation.clone().unwrap_or_else(|| {
             Implementation::new(
@@ -224,92 +239,309 @@ impl ServerHandler for BrontesServer {
         }
 
         let trace_context = TraceContext::from_meta(&context.meta, name);
-        let env = resolve_call_env(&self.cfg, &trace_context);
-
-        let middleware = resolved.middleware.clone();
-        let command_path = resolved.command_path.clone();
-        let flag_specs = resolved.flag_specs.clone();
-        let protocol_version = context.protocol_version();
-        let client_capabilities = context.client_capabilities();
-        let ctx = MiddlewareCtx {
-            cancellation_token: context.ct.clone(),
+        let plan = CallPlan {
             tool_name: name.to_string(),
+            command_path: resolved.command_path.clone(),
+            flag_specs: Arc::new(resolved.flag_specs.clone()),
+            env: Arc::new(resolve_call_env(&self.cfg, &trace_context)),
+            middleware: resolved.middleware.clone(),
             input,
             trace_context,
             meta: context.meta.clone(),
-            protocol_version: protocol_version.clone(),
-            client_capabilities: client_capabilities.clone(),
-            input_responses: request.input_responses,
-            request_state: request.request_state,
+            protocol_version: context.protocol_version(),
+            client_capabilities: context.client_capabilities(),
         };
 
-        // Build the leaf-of-chain: a one-shot async closure that invokes the
-        // subprocess via [`crate::exec::run_tool`]. Owned captures (`env`,
-        // `flag_specs`, `tool_name`) keep the future `'static` for
-        // `tokio::spawn`.
-        let exec_tool_name = name.to_string();
-        let next: BoxedNext = Box::new(
-            move |ctx_inner: MiddlewareCtx| -> BoxFuture<'static, MiddlewareResult> {
-                Box::pin(async move {
-                    crate::exec::run_tool(
-                        &exec_tool_name,
-                        &ctx_inner.input,
-                        &flag_specs,
-                        &env,
-                        ctx_inner.cancellation_token,
-                    )
-                    .await
-                    .map(MiddlewareOutcome::Complete)
-                })
-            },
-        );
+        // SEP-2663: hand the call back as a task when this command is
+        // configured for one and the client declared the extension. A client
+        // that did not declare it gets the blocking result no matter what the
+        // config says — the handle is a shape it has no way to parse.
+        let detached = self.cfg.resolved_task_mode(&plan.command_path) == TaskMode::Detached
+            && plan
+                .client_capabilities
+                .as_ref()
+                .is_some_and(rmcp::model::ClientCapabilities::supports_tasks);
+        if detached {
+            let options = TaskOptions::new()
+                .with_ttl_ms(self.cfg.resolved_task_ttl_ms())
+                .with_poll_interval_ms(self.cfg.resolved_task_poll_interval_ms())
+                .with_status_message(format!("running {}", plan.command_path));
+            let task = self.tasks.spawn(options, move |task_ctx| {
+                Box::pin(run_detached(plan, task_ctx))
+            });
+            return Ok(CallToolResponse::Task(CreateTaskResult::new(task)));
+        }
 
-        // Always wrap the chain in `tokio::spawn` (whether or not middleware
-        // is present) so a panic in either layer becomes a recoverable
-        // `JoinError` rather than tearing down the rmcp service task.
-        let join_handle = if let Some(mw) = middleware {
-            tokio::spawn(async move { mw(ctx, next).await })
-        } else {
-            tokio::spawn(async move { next(ctx).await })
-        };
-
-        let result: MiddlewareResult = match join_handle.await {
-            Ok(r) => r,
-            Err(join_err) if join_err.is_panic() => {
-                let payload = join_err.try_into_panic().ok().map_or_else(
-                    || "unknown panic payload".to_string(),
-                    |b| panic_message_from(&*b),
-                );
-                // Surface the panic as a tool_error (CallToolResult with
-                // `is_error: true`) rather than a JSON-RPC Err. The MCP
-                // server keeps running; the client learns this one call
-                // failed without the transport tearing down.
-                return Ok(
-                    tool_error_result(name, &command_path, &crate::Error::Panic(payload)).into(),
-                );
-            }
-            Err(join_err) => {
-                return Ok(tool_error_result(
-                    name,
-                    &command_path,
-                    &crate::Error::Panic(format!("middleware/exec task join error: {join_err}")),
-                )
-                .into());
-            }
-        };
+        let result = plan
+            .run_once(
+                context.ct.clone(),
+                request.input_responses,
+                request.request_state,
+            )
+            .await;
 
         Ok(outcome_to_response(
             result,
-            name,
-            &command_path,
-            protocol_version.as_ref(),
-            client_capabilities.as_ref(),
+            &plan.tool_name,
+            &plan.command_path,
+            plan.protocol_version.as_ref(),
+            plan.client_capabilities.as_ref(),
         ))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.find_tool(name)
     }
+
+    async fn get_task(
+        &self,
+        request: GetTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<GetTaskResult, McpError> {
+        Ok(GetTaskResult::new(self.tasks.get_task(&request.task_id)?))
+    }
+
+    async fn update_task(
+        &self,
+        request: UpdateTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), McpError> {
+        self.tasks
+            .update_task(&request.task_id, request.input_responses)
+    }
+
+    async fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), McpError> {
+        self.tasks.cancel_task(&request.task_id)
+    }
+}
+
+/// Everything one `tools/call` needs to run its middleware chain, owned so the
+/// chain can be re-entered without the originating request.
+///
+/// Re-entry is what a detached call needs: MCP has no resume operation, so an
+/// input request is answered by running the chain again from the top, and for a
+/// task that second run happens long after the `tools/call` that created it has
+/// been answered.
+struct CallPlan {
+    tool_name: String,
+    command_path: String,
+    flag_specs: Arc<BTreeMap<String, FlagSpec>>,
+    env: Arc<HashMap<String, String>>,
+    middleware: Option<Middleware>,
+    input: ToolInput,
+    trace_context: TraceContext,
+    meta: RequestMetaObject,
+    protocol_version: Option<ProtocolVersion>,
+    client_capabilities: Option<ClientCapabilities>,
+}
+
+impl CallPlan {
+    /// Build the leaf of the chain: a one-shot async closure that spawns the
+    /// subprocess via [`crate::exec::run_tool`]. Owned and `Arc`-shared
+    /// captures keep the future `'static`.
+    fn next(&self) -> BoxedNext {
+        let tool_name = self.tool_name.clone();
+        let flag_specs = Arc::clone(&self.flag_specs);
+        let env = Arc::clone(&self.env);
+        Box::new(
+            move |ctx: MiddlewareCtx| -> BoxFuture<'static, MiddlewareResult> {
+                Box::pin(async move {
+                    crate::exec::run_tool(
+                        &tool_name,
+                        &ctx.input,
+                        &flag_specs,
+                        &env,
+                        ctx.cancellation_token,
+                    )
+                    .await
+                    .map(MiddlewareOutcome::Complete)
+                })
+            },
+        )
+    }
+
+    /// Run the middleware chain once, with whatever the client has answered so
+    /// far.
+    ///
+    /// A panic anywhere in the chain becomes [`crate::Error::Panic`] rather
+    /// than unwinding: the chain always runs inside `tokio::spawn`, so the rmcp
+    /// service task survives a middleware that panics.
+    async fn run_once(
+        &self,
+        cancellation_token: CancellationToken,
+        input_responses: Option<InputResponses>,
+        request_state: Option<String>,
+    ) -> MiddlewareResult {
+        let ctx = MiddlewareCtx {
+            cancellation_token,
+            tool_name: self.tool_name.clone(),
+            input: self.input.clone(),
+            trace_context: self.trace_context.clone(),
+            meta: self.meta.clone(),
+            protocol_version: self.protocol_version.clone(),
+            client_capabilities: self.client_capabilities.clone(),
+            input_responses,
+            request_state,
+        };
+        let next = self.next();
+
+        // Always wrap the chain in `tokio::spawn` (whether or not middleware
+        // is present) so a panic in either layer becomes a recoverable
+        // `JoinError` rather than tearing down the rmcp service task.
+        let join_handle = if let Some(mw) = self.middleware.clone() {
+            tokio::spawn(async move { mw(ctx, next).await })
+        } else {
+            tokio::spawn(async move { next(ctx).await })
+        };
+
+        match join_handle.await {
+            Ok(result) => result,
+            Err(join_err) if join_err.is_panic() => {
+                let payload = join_err.try_into_panic().ok().map_or_else(
+                    || "unknown panic payload".to_string(),
+                    |b| panic_message_from(&*b),
+                );
+                Err(crate::Error::Panic(payload))
+            }
+            Err(join_err) => Err(crate::Error::Panic(format!(
+                "middleware/exec task join error: {join_err}"
+            ))),
+        }
+    }
+}
+
+/// How many times a detached call may re-enter the middleware chain after an
+/// input request before brontes calls it a loop.
+///
+/// A blocking call is bounded by the client, which decides whether to retry.
+/// A detached call answers its own retries, so a middleware that asks for input
+/// unconditionally would otherwise spin forever inside a task the client can
+/// only watch.
+const MAX_TASK_INPUT_ROUNDS: usize = 16;
+
+/// Run a call as a SEP-2663 task: execute the chain, resolve any input request
+/// through `tasks/update`, and settle with the command's result.
+///
+/// The middleware sees exactly what it sees in a blocking call — an input
+/// request ends its run, and the answer arrives on a fresh run through
+/// [`MiddlewareCtx::input_responses`] and [`MiddlewareCtx::request_state`].
+/// Only the transport differs: the questions leave via `tasks/get` instead of
+/// the `tools/call` response.
+async fn run_detached(
+    plan: CallPlan,
+    task_ctx: TaskContext,
+) -> std::result::Result<CallToolResult, TaskExit> {
+    // The `tools/call` that created this task was answered the moment the
+    // handle went out, taking its cancellation token with it. `tasks/cancel`
+    // is the only channel left, so bridge it onto a token of our own —
+    // without this the child process outlives a cancelled task.
+    let cancellation_token = CancellationToken::new();
+    let bridge = tokio::spawn({
+        let task_ctx = task_ctx.clone();
+        let cancellation_token = cancellation_token.clone();
+        async move {
+            task_ctx.cancelled().await;
+            cancellation_token.cancel();
+        }
+    });
+
+    let settled = detached_rounds(&plan, &task_ctx, cancellation_token).await;
+
+    // The bridge parks on a watch channel the task manager keeps alive for as
+    // long as it retains the task record — which, at the default unlimited
+    // TTL, is the lifetime of the server.
+    bridge.abort();
+    settled
+}
+
+/// The retry loop behind [`run_detached`], split out so the cancellation bridge
+/// is torn down on every exit path.
+async fn detached_rounds(
+    plan: &CallPlan,
+    task_ctx: &TaskContext,
+    cancellation_token: CancellationToken,
+) -> std::result::Result<CallToolResult, TaskExit> {
+    let mut input_responses: Option<InputResponses> = None;
+    let mut request_state: Option<String> = None;
+
+    for _ in 0..MAX_TASK_INPUT_ROUNDS {
+        let outcome = plan
+            .run_once(
+                cancellation_token.clone(),
+                input_responses.take(),
+                request_state.take(),
+            )
+            .await;
+
+        match outcome {
+            // A command that ran to completion reports what it did, even if a
+            // cancellation arrived while it was finishing: the side effects
+            // already happened, and hiding them behind `cancelled` is the one
+            // outcome the caller cannot recover from.
+            Ok(MiddlewareOutcome::Complete(output)) => {
+                return Ok(tool_output_to_result(&plan.tool_name, &output));
+            }
+
+            Ok(MiddlewareOutcome::InputRequired(input_required)) => {
+                if let Some(reason) = reject_unsendable_input_request(
+                    &input_required,
+                    plan.protocol_version.as_ref(),
+                    plan.client_capabilities.as_ref(),
+                ) {
+                    tracing::warn!(
+                        target: "brontes::server",
+                        tool = %plan.tool_name,
+                        task = %task_ctx.task_id(),
+                        %reason,
+                        "dropping an input request the client cannot answer"
+                    );
+                    return Ok(tool_error_result(
+                        &plan.tool_name,
+                        &plan.command_path,
+                        &crate::Error::Config(reason),
+                    ));
+                }
+
+                let requests = input_required.input_requests.unwrap_or_default();
+                task_ctx.set_status_message(format!(
+                    "waiting for {} client response(s)",
+                    requests.len()
+                ));
+
+                let mut answers = InputResponses::new();
+                for (key, request) in requests {
+                    // Propagates `TaskExit::Cancelled` when `tasks/cancel`
+                    // clears the pending inputs out from under us.
+                    let answer = task_ctx.request_input(key.clone(), request).await?;
+                    answers.insert(key, answer);
+                }
+
+                task_ctx.set_status_message(format!("running {}", plan.command_path));
+                input_responses = Some(answers);
+                request_state = input_required.request_state;
+            }
+
+            Err(e) => {
+                if task_ctx.is_cancel_requested() {
+                    return Err(TaskExit::Cancelled);
+                }
+                return Ok(tool_error_result(&plan.tool_name, &plan.command_path, &e));
+            }
+        }
+    }
+
+    Ok(tool_error_result(
+        &plan.tool_name,
+        &plan.command_path,
+        &crate::Error::Config(format!(
+            "middleware asked the client for input {MAX_TASK_INPUT_ROUNDS} times without \
+             completing; giving up rather than looping"
+        )),
+    ))
 }
 
 /// Turn what the middleware chain produced into the `tools/call` response.

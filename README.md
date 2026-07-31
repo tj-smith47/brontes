@@ -160,8 +160,9 @@ Backups are **only** written when an existing file is mutated — first writes d
 
 - **Stdio MCP server** — `mcp start` runs an stdio server fronting your clap CLI; the launch transport every editor manager wires up.
 - **Streamable HTTP MCP server** — `mcp stream` exposes the same tool list over HTTP via rmcp 3.0; loopback-only by default, widen with `--allow-host`.
-- **MCP `2026-07-28` support** — stateless requests, `server/discover`, and SEP-2549 cache hints, with every earlier protocol revision back to `2024-11-05` still negotiable. See [Protocol support](#protocol-support).
+- **MCP `2026-07-28` support** — stateless requests, `server/discover`, the Tasks extension, MRTR, SEP-2243 header promotion, and SEP-2549 cache hints, with every earlier protocol revision back to `2024-11-05` still negotiable. See [Protocol support](#protocol-support).
 - **Editor managers** for Claude Desktop, Cursor, VSCode, and Zed — each with `enable` / `disable` / `list` leaves, `--workspace` per-project mode where applicable, and snapshot-before-write backups. Zed preserves unrelated `settings.json` keys (theme, font, keymap) and tolerates JSONC on load.
+- **Long-running commands as tasks** — `Config::task_mode_for(path, TaskMode::Detached)` answers `tools/call` with a handle the client polls, answers, and cancels, instead of blocking for the length of a release. See [Long-running commands as tasks](#long-running-commands-as-tasks-sep-2663).
 - **Async middleware** — `Middleware` wraps tool execution for auth, audit logging, rate limiting, or distributed tracing without forking the runtime.
 - **Default env injection** — `Config::default_env(key, val)` ships env vars with every tool launch; per-call `env` from the MCP client wins on key conflict.
 - **Tool-name prefix** — `Config::tool_name_prefix` replaces the root command name in every generated tool name, avoiding cross-CLI collisions on the same MCP client.
@@ -335,11 +336,35 @@ brontes negotiates every MCP protocol revision rmcp knows, newest first:
 | `2025-11-25` | Fallback offered to clients that request an unknown version. |
 | `2025-06-18`, `2025-03-26`, `2024-11-05` | Still negotiable; these keep the handshake and, over HTTP, a session id. |
 
-A brontes server advertises exactly one capability — `tools`. The
-`2026-07-28` revision deprecates Roots, Sampling, and Logging, and brontes
-implements none of them: it logs to stderr via `tracing` (the migration the
-spec suggests for Logging), and `Middleware` is the extension point for
-anything a server would otherwise ask the client to do.
+A brontes server advertises `tools`, plus the `tasks` extension once any
+command is configured to detach. The `2026-07-28` revision deprecates Roots,
+Sampling, and Logging, and brontes implements none of them: it logs to stderr
+via `tracing` (the migration the spec suggests for Logging), and `Middleware`
+is the extension point for anything a server would otherwise ask the client to
+do.
+
+### What `2026-07-28` changed, and where it lands
+
+| Change | brontes |
+|---|---|
+| Stateless: no handshake, no `Mcp-Session-Id` (SEP-2575, SEP-2567) | Served. Nothing in a brontes server was per-session to begin with — the tool list is walked once from an immutable `clap` tree |
+| `server/discover` (SEP-2575) | Implemented, with the same cache hints as `tools/list` |
+| `resultType` on every result (SEP-2322) | Carried |
+| Multi Round-Trip Requests (SEP-2322) | `MiddlewareOutcome::InputRequired`; refused rather than sent when the peer cannot answer |
+| Tasks extension (SEP-2663) | `Config::task_mode_for(path, TaskMode::Detached)` — see below |
+| `Mcp-Method` / `Mcp-Name` request headers (SEP-2243) | Validated on streamable HTTP |
+| `x-mcp-header` parameter promotion (SEP-2243) | `Config::promote_flag` |
+| `ttlMs` / `cacheScope` (SEP-2549) | `Config::cache_ttl` / `Config::cache_scope` |
+| Trace context in `_meta` (SEP-414) | Lowered onto the child process as `TRACEPARENT` / `TRACESTATE` / `BAGGAGE` |
+| Deterministic `tools/list` order | Depth-first `clap` walk order, identical across calls and processes |
+| `extensions` on capabilities | Carries the `tasks` declaration |
+| Reserved error range `-32020`–`-32099` | brontes mints no error codes of its own; a failed command is a tool result, not a protocol error |
+
+The rest of the revision does not reach a CLI wrapper: `subscriptions/listen`,
+the removed `ping` / `logging/setLevel` / roots notifications, the resource
+error-code renumbering, and the JSON Schema loosening all concern surfaces
+brontes does not expose (it serves no resources, prompts, or completions), and
+the authorization changes (SEP-2468, SEP-837, SEP-2352) are client-side.
 
 ### Cache hints (SEP-2549)
 
@@ -417,6 +442,48 @@ Three rules keep this from failing silently:
 that schema lands nested under `flags`, where the annotation is not read — and
 logs a warning pointing at `promote_flag`.
 
+### Long-running commands as tasks (SEP-2663)
+
+A `tools/call` blocks until the process exits. That is fine for `version` and
+wrong for `release`: the client waits with no progress, no way to check on it,
+and no way to stop it. Name those commands and they hand back a handle instead:
+
+```rust
+use std::time::Duration;
+use brontes::{Config, TaskMode};
+
+let cfg = Config::default()
+    .task_mode_for("anodizer release", TaskMode::Detached)
+    .task_mode_for("anodizer publish", TaskMode::Detached)
+    .task_poll_interval(Duration::from_secs(2));
+```
+
+```jsonc
+// tools/call — answered immediately
+{ "resultType": "task", "task": { "taskId": "0b7f…", "status": "working",
+                                  "pollIntervalMs": 2000 } }
+
+// tasks/get — while it runs
+{ "taskId": "0b7f…", "status": "working", "statusMessage": "running anodizer release" }
+
+// tasks/get — once it exits, carrying the same result a blocking call returns
+{ "taskId": "0b7f…", "status": "completed",
+  "result": { "structuredContent": { "stdout": "…", "exit_code": 0 } } }
+```
+
+`tasks/cancel` kills the process; the task settles as `cancelled`. A command
+that finishes anyway reports what it did, because the side effects already
+happened. A middleware asking for input works unchanged — the question leaves
+through `tasks/get` and `tasks/update` answers it, then the chain re-enters
+with `input_responses` exactly as it would on a blocking retry.
+
+Two properties are worth knowing before you flip it on:
+
+| | |
+|---|---|
+| A client that never declared the extension | Gets the blocking result, whatever the config says. Detaching is never a compatibility break |
+| `Config::task_ttl` unset (the default) | No time limit — the command runs until it exits or is cancelled. A finite TTL **aborts** a command still running when it elapses, and is also what eventually sweeps finished task records; set one on a long-lived `mcp stream` server |
+
 ## API reference
 
 - `brontes::command(cfg)` / `brontes::handle(matches, cli, cfg)` /
@@ -428,10 +495,14 @@ logs a warning pointing at `promote_flag`.
   offline tool-list builder for consumers that wire their own server.
 - `brontes::Config` — fluent builder for tool-name prefix, selectors,
   default env, annotations, deprecated commands, per-flag schema/type
-  overrides, SEP-2243 header promotion, trace-context propagation, log level,
-  MCP `Implementation` identity, and per-command description configuration.
+  overrides, SEP-2243 header promotion, trace-context propagation, task mode,
+  log level, MCP `Implementation` identity, and per-command description
+  configuration.
 - `brontes::DescriptionMode` — `Short` (prefer `about`) or `Long` (prefer
   `long_about`); default is `Long`.
+- `brontes::TaskMode` — `Blocking` (default) or `Detached`, per command via
+  `Config::task_mode_for`; bounded by `Config::task_ttl` and paced by
+  `Config::task_poll_interval`.
 - `brontes::Selector` + `brontes::selectors::{allow_cmds, exclude_cmds,
   allow_cmds_containing, exclude_cmds_containing, allow_flags, exclude_flags,
   no_flags}` — built-in matcher factories.

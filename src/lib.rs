@@ -94,7 +94,7 @@ mod walk;
 
 pub use annotations::ToolAnnotations;
 pub use command::{command, generate_tools, handle, run, run_from};
-pub use config::{Config, DescriptionMode};
+pub use config::{Config, DescriptionMode, TaskMode};
 pub use error::{Error, Result};
 // Re-exported so setting `Config::cache_scope` does not force a direct `rmcp`
 // dependency on consumers — and, more importantly, so the value they pass is

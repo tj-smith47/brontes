@@ -68,6 +68,41 @@ pub enum DescriptionMode {
     Long,
 }
 
+/// Whether a `tools/call` runs to completion inline or is handed back as a
+/// task handle (SEP-2663, `io.modelcontextprotocol/tasks`).
+///
+/// The mode only ever applies to a client that declared the tasks extension.
+/// A client without it always receives the blocking result, whatever the mode
+/// says, because a task handle is a shape it cannot parse.
+///
+/// # Defaults
+///
+/// [`TaskMode::Blocking`] is the default and matches every brontes release
+/// before the extension existed: `tools/call` returns when the process exits.
+/// That is fine for commands measured in seconds and wrong for the ones this
+/// library exists to wrap — a release, a build, a deploy — where the call
+/// occupies the client for minutes with no way to check on it or stop it.
+///
+/// # Surgical override
+///
+/// Prefer [`Config::task_mode_for`] on the handful of long-running commands
+/// over flipping the global default: a task costs the client an extra poll
+/// round trip, which is pure overhead on a command that returns immediately.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TaskMode {
+    /// Run the command inline; `tools/call` returns the finished result.
+    /// Default.
+    #[default]
+    Blocking,
+
+    /// Return a task handle immediately and run the command in the
+    /// background.  The client polls `tasks/get` for progress and the final
+    /// result, answers any input request with `tasks/update`, and can stop
+    /// the command with `tasks/cancel`.
+    Detached,
+}
+
 /// User-facing configuration for the `mcp` subtree.
 ///
 /// Held alongside the user's [`clap::Command`] tree; consumed by
@@ -215,6 +250,31 @@ pub struct Config {
     /// `None` uses [`Config::DEFAULT_PROPAGATE_TRACE_CONTEXT`].  See
     /// [`Config::propagate_trace_context`].
     pub propagate_trace_context: Option<bool>,
+
+    /// Whether `tools/call` blocks or hands back a task handle (SEP-2663).
+    ///
+    /// Defaults to [`TaskMode::Blocking`].  Override per-command via
+    /// [`Config::task_mode_for`].
+    pub task_mode: TaskMode,
+
+    /// Per-command [`TaskMode`] overrides, keyed by full command path.
+    ///
+    /// Takes precedence over [`Config::task_mode`].  Paths that match no
+    /// walked command are rejected by `generate_tools`.
+    pub task_modes: HashMap<String, TaskMode>,
+
+    /// How long a detached task may run, and how long its record survives
+    /// afterwards (`ttlMs`, SEP-2663).
+    ///
+    /// `None` — the default — means unlimited.  See [`Config::task_ttl`] for
+    /// what a finite value implies.
+    pub task_ttl: Option<Duration>,
+
+    /// The polling interval brontes suggests to clients for its tasks
+    /// (`pollIntervalMs`, SEP-2663).
+    ///
+    /// `None` uses [`Config::DEFAULT_TASK_POLL_INTERVAL`].
+    pub task_poll_interval: Option<Duration>,
 }
 
 impl Config {
@@ -268,6 +328,55 @@ impl Config {
     pub fn resolved_propagate_trace_context(&self) -> bool {
         self.propagate_trace_context
             .unwrap_or(Self::DEFAULT_PROPAGATE_TRACE_CONTEXT)
+    }
+
+    /// Default polling interval suggested for detached tasks: one second.
+    ///
+    /// Matches the SDK's own default.  A wrapped CLI command that is worth
+    /// detaching runs for long enough that a second of poll granularity is
+    /// noise; [`Config::task_poll_interval`] tightens it.
+    pub const DEFAULT_TASK_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+    /// Resolve the effective [`TaskMode`] for a full command path.
+    ///
+    /// A per-command entry wins over the global default.
+    #[must_use]
+    pub fn resolved_task_mode(&self, cmd_path: &str) -> TaskMode {
+        self.task_modes
+            .get(cmd_path)
+            .copied()
+            .unwrap_or(self.task_mode)
+    }
+
+    /// Resolve the task TTL in milliseconds, or `None` for unlimited.
+    ///
+    /// Saturates at [`u64::MAX`] so an absurd [`Duration`] cannot wrap.
+    #[must_use]
+    pub fn resolved_task_ttl_ms(&self) -> Option<u64> {
+        self.task_ttl
+            .map(|ttl| u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX))
+    }
+
+    /// Resolve the suggested poll interval in milliseconds.
+    ///
+    /// Saturates at [`u64::MAX`] so an absurd [`Duration`] cannot wrap.
+    #[must_use]
+    pub fn resolved_task_poll_interval_ms(&self) -> u64 {
+        let interval = self
+            .task_poll_interval
+            .unwrap_or(Self::DEFAULT_TASK_POLL_INTERVAL);
+        u64::try_from(interval.as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Whether any command on this server can produce a task.
+    ///
+    /// Drives the `tasks` capability: brontes advertises the extension only
+    /// when some command is actually detached, so a client never negotiates a
+    /// capability that would answer `tasks/get` with "no such task" forever.
+    #[must_use]
+    pub fn tasks_enabled(&self) -> bool {
+        self.task_mode == TaskMode::Detached
+            || self.task_modes.values().any(|m| *m == TaskMode::Detached)
     }
 
     /// Set the subcommand name brontes registers on the CLI.
@@ -703,6 +812,97 @@ impl Config {
     #[must_use]
     pub const fn propagate_trace_context(mut self, propagate: bool) -> Self {
         self.propagate_trace_context = Some(propagate);
+        self
+    }
+
+    /// Hand `tools/call` back as a task handle for every command that a
+    /// tasks-capable client invokes (SEP-2663).
+    ///
+    /// Reach for [`Config::task_mode_for`] first: a task costs an extra poll
+    /// round trip, which buys nothing on a command that returns immediately.
+    ///
+    /// ```rust
+    /// use brontes::{Config, TaskMode};
+    ///
+    /// let cfg = Config::default().task_mode(TaskMode::Detached);
+    /// assert_eq!(cfg.resolved_task_mode("cli build"), TaskMode::Detached);
+    /// ```
+    #[must_use]
+    pub const fn task_mode(mut self, mode: TaskMode) -> Self {
+        self.task_mode = mode;
+        self
+    }
+
+    /// Override [`TaskMode`] for a specific command path.
+    ///
+    /// The path is the full space-separated command path as it appears in the
+    /// walked tree (`"anodizer release"`), not the MCP tool name.  A path
+    /// matching no walked command is an [`crate::Error::Config`] from
+    /// `generate_tools` rather than a silently ignored entry.
+    ///
+    /// ```rust
+    /// use brontes::{Config, TaskMode};
+    ///
+    /// let cfg = Config::default()
+    ///     .task_mode_for("anodizer release", TaskMode::Detached)
+    ///     .task_mode_for("anodizer publish", TaskMode::Detached);
+    ///
+    /// assert_eq!(cfg.resolved_task_mode("anodizer release"), TaskMode::Detached);
+    /// assert_eq!(cfg.resolved_task_mode("anodizer version"), TaskMode::Blocking);
+    /// ```
+    #[must_use]
+    pub fn task_mode_for(mut self, cmd_path: impl Into<String>, mode: TaskMode) -> Self {
+        self.task_modes.insert(cmd_path.into(), mode);
+        self
+    }
+
+    /// Bound how long a detached task may run and how long its record lives.
+    ///
+    /// Unset — the default — means unlimited, which preserves brontes'
+    /// execution contract: a wrapped command runs until it exits or the client
+    /// cancels it, never until a clock brontes invented runs out.
+    ///
+    /// A finite TTL is therefore two things at once, and the first is easy to
+    /// miss: a command still running when the TTL elapses is **aborted** and
+    /// its task settles as `failed`.  Set it to a value above the slowest
+    /// command the server exposes, or leave it unset.
+    ///
+    /// The tradeoff for leaving it unset is retention: finished task records
+    /// are held for the lifetime of the server process.  That is bounded and
+    /// harmless for `mcp start`, where the process belongs to one client and
+    /// exits with it; a long-lived `mcp stream` server serving many clients
+    /// should set a TTL so completed tasks are eventually swept.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().task_ttl(Duration::from_secs(3600));
+    /// assert_eq!(cfg.resolved_task_ttl_ms(), Some(3_600_000));
+    /// ```
+    #[must_use]
+    pub const fn task_ttl(mut self, ttl: Duration) -> Self {
+        self.task_ttl = Some(ttl);
+        self
+    }
+
+    /// Suggest how often clients should poll `tasks/get` for a detached
+    /// command.
+    ///
+    /// `None` uses [`Config::DEFAULT_TASK_POLL_INTERVAL`].  Shorten it for a
+    /// CLI whose commands finish in a second or two, so the poll interval does
+    /// not dominate the command's own runtime.
+    ///
+    /// ```rust
+    /// use std::time::Duration;
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().task_poll_interval(Duration::from_millis(250));
+    /// assert_eq!(cfg.resolved_task_poll_interval_ms(), 250);
+    /// ```
+    #[must_use]
+    pub const fn task_poll_interval(mut self, interval: Duration) -> Self {
+        self.task_poll_interval = Some(interval);
         self
     }
 }
