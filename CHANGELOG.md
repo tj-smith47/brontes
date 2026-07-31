@@ -4,11 +4,6 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
-### Changed
-
-- Command paths no longer require the CLI's own name, anywhere they are written. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command`, for group members in `Config::group`, and for every path-keyed builder on `Config` — `annotation`, `deprecate`, `description`, `description_mode_for`, `task_mode_for`, `promote_flag`, `promote_flag_as`, `flag_schema`, and `flag_type_override`. `Selector` command matchers are the one surface that still sees the resolved path, because a closure has nothing to resolve. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
-
-
 ### Added
 
 - MCP protocol revision `2026-07-28` support. The revision is stateless — no `initialize`/`notifications/initialized` handshake and no `Mcp-Session-Id` — and brontes serves it end to end: `server/discover` (SEP-2575) reports the supported version set, the `tools`-only capability set, and the host CLI's identity; every result carries the `resultType` discriminator (SEP-2322); and `tools/call` over streamable HTTP validates SEP-2243 standard headers (`Mcp-Method` / `Mcp-Name`). Protocol revisions back to `2024-11-05` continue to negotiate, handshake and session id included.
@@ -36,9 +31,14 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ### Changed
 
+- Command paths no longer require the CLI's own name, anywhere they are written. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command`, for group members in `Config::group`, and for every path-keyed builder on `Config` — `annotation`, `deprecate`, `description`, `description_mode_for`, `task_mode_for`, `promote_flag`, `promote_flag_as`, `flag_schema`, and `flag_type_override`. `Selector` command matchers are the one surface that still sees the resolved path, because a closure has nothing to resolve. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
 - `rmcp` 2.2 → 3.0, the SDK revision implementing MCP `2026-07-28`. Consumers who name `rmcp` types directly — `Config::implementation` takes an `rmcp::model::Implementation` — must move to `rmcp` 3.x in lockstep.
 - **Breaking:** `MiddlewareResult` is now `Result<MiddlewareOutcome>` rather than `Result<ToolOutput>`, so a middleware can answer with an MRTR input request instead of a finished process. `MiddlewareOutcome: From<ToolOutput>` makes the migration a trailing `.into()` on each success path; the change is a compile error at every affected site, never a silent behavior shift.
 - Tools are listed in `clap` declaration order rather than reverse. The order is a tool list's only ranking signal, so it should read the way the CLI's own `--help` does. It remains stable across calls and processes, which is what the revision asks for so clients can cache a listing.
+
+### Removed
+
+- The `derive` feature on the `clap` dependency, which brontes never used — it builds command trees through the builder API. Consumers who use `#[derive(Parser)]` enable it themselves and are unaffected; everyone else stops carrying `clap_derive` and its proc-macro chain.
 
 ## [0.3.0] - 2026-07-19
 
