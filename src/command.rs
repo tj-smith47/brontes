@@ -157,7 +157,7 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
     let resolved = crate::walk::walk(&built);
 
     // 2. Resolve selection paths against the root name, then validate.
-    let cfg = &normalize_selection_paths(cfg, built.get_name());
+    let cfg = &normalize_command_paths(cfg, built.get_name());
     validate_paths(&resolved, cfg)?;
 
     // 3. Compute the effective prefix: `tool_name_prefix` override when non-empty,
@@ -386,18 +386,52 @@ fn build_tool_name(path: &str, prefix: &str) -> String {
 // than silently no-oping at request time.
 // ---------------------------------------------------------------------------
 
-/// Rewrite every selection path so it starts at the root command.
+/// Rewrite every command path in `cfg` so it starts at the root command.
 ///
-/// Group members and the tool filter's command paths may be written with or
-/// without the CLI's own name; everything downstream — validation, matching,
-/// the `--groups` listing — sees the resolved form. Borrows unchanged when
-/// there is no selection to resolve, which is the common case.
-pub fn normalize_selection_paths<'a>(cfg: &'a Config, root: &str) -> Cow<'a, Config> {
-    if cfg.groups.is_empty() && cfg.tool_filter.is_empty() {
+/// Every path a caller writes — a `Config` key, a group member, a `--command`
+/// flag — may omit the CLI's own name, because that name is the one segment
+/// brontes can always derive. Everything downstream (validation, description
+/// and annotation lookup, flag promotion, matching, the `--groups` listing)
+/// sees only the resolved form, so the two spellings cannot behave
+/// differently.
+///
+/// [`Selector`](crate::Selector) predicates are the one surface this cannot
+/// reach: they are closures the caller writes against the path string, and a
+/// closure has nothing to rewrite. They receive the resolved path.
+///
+/// Borrows unchanged when there is no path to resolve.
+pub fn normalize_command_paths<'a>(cfg: &'a Config, root: &str) -> Cow<'a, Config> {
+    let untouched = cfg.annotations.is_empty()
+        && cfg.deprecated_commands.is_empty()
+        && cfg.flag_schemas.is_empty()
+        && cfg.flag_type_overrides.is_empty()
+        && cfg.promoted_flags.is_empty()
+        && cfg.description_modes.is_empty()
+        && cfg.descriptions.is_empty()
+        && cfg.task_modes.is_empty()
+        && cfg.groups.is_empty()
+        && cfg.tool_filter.is_empty();
+    if untouched {
         return Cow::Borrowed(cfg);
     }
 
+    let path = |p: &String| crate::toolset::absolute(p, root);
+    let keyed = |k: &(String, String)| (path(&k.0), k.1.clone());
+
     let mut out = cfg.clone();
+    out.annotations = rekey(&cfg.annotations, path);
+    out.descriptions = rekey(&cfg.descriptions, path);
+    out.description_modes = rekey(&cfg.description_modes, path);
+    out.task_modes = rekey(&cfg.task_modes, path);
+    out.deprecated_commands = cfg.deprecated_commands.iter().map(path).collect();
+    out.flag_schemas = rekey(&cfg.flag_schemas, keyed);
+    out.flag_type_overrides = rekey(&cfg.flag_type_overrides, keyed);
+    out.promoted_flags = cfg
+        .promoted_flags
+        .iter()
+        .map(|(k, v)| (keyed(k), v.clone()))
+        .collect();
+
     for group in out.groups.values_mut() {
         for member in &mut group.commands {
             *member = crate::toolset::absolute(member, root);
@@ -405,6 +439,16 @@ pub fn normalize_selection_paths<'a>(cfg: &'a Config, root: &str) -> Cow<'a, Con
     }
     out.tool_filter = out.tool_filter.normalized(root);
     Cow::Owned(out)
+}
+
+/// Rebuild a map with every key rewritten by `resolve`.
+fn rekey<K, V, S>(map: &HashMap<K, V, S>, resolve: impl Fn(&K) -> K) -> HashMap<K, V, S>
+where
+    K: std::hash::Hash + Eq,
+    V: Clone,
+    S: std::hash::BuildHasher + Default,
+{
+    map.iter().map(|(k, v)| (resolve(k), v.clone())).collect()
 }
 
 /// Reject any command whose own name contains a space.

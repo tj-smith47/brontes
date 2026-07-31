@@ -126,6 +126,13 @@ pub enum TaskMode {
 ///     .log_level(tracing::Level::INFO);
 /// ```
 ///
+/// # Command paths
+///
+/// Every builder that takes a `cmd_path` reads it relative to the CLI's own
+/// name, which brontes supplies from the command tree: `"release notes"` and
+/// `"my-cli release notes"` name the same command. Paths are space-joined and
+/// matched on whole segments.
+///
 /// # Forward compatibility
 ///
 /// `Config` is `#[non_exhaustive]`. Construct it via [`Config::default()`] and
@@ -353,9 +360,12 @@ impl Config {
     /// noise; [`Config::task_poll_interval`] tightens it.
     pub const DEFAULT_TASK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-    /// Resolve the effective [`TaskMode`] for a full command path.
+    /// Resolve the effective [`TaskMode`] for a command path.
     ///
-    /// A per-command entry wins over the global default.
+    /// A per-command entry wins over the global default. The lookup is exact
+    /// against the keys as written, so query it the way you wrote them;
+    /// brontes resolves relative and absolute spellings onto each other when
+    /// it builds the tool list, not here.
     #[must_use]
     pub fn resolved_task_mode(&self, cmd_path: &str) -> TaskMode {
         self.task_modes
@@ -467,7 +477,8 @@ impl Config {
 
     /// Attach [`ToolAnnotations`] to the command at `cmd_path`.
     ///
-    /// `cmd_path` is the full space-joined path of the command, e.g.
+    /// `cmd_path` is the space-joined command path, with or without the
+    /// CLI's own name, e.g.
     /// `"my-cli list"`.
     ///
     /// ```rust
@@ -488,13 +499,14 @@ impl Config {
     /// Mark a command as deprecated.
     ///
     /// Deprecated commands are excluded from the generated tool list.
-    /// `cmd_path` is the full space-joined command path, e.g. `"my-cli oldcmd"`.
+    /// `cmd_path` is the space-joined command path (the CLI's own name is
+    /// optional), e.g. `"oldcmd"` or `"my-cli oldcmd"`.
     ///
     /// ```rust
     /// use brontes::Config;
     ///
-    /// let cfg = Config::default().deprecate("my-cli oldcmd");
-    /// assert!(cfg.deprecated_commands.contains("my-cli oldcmd"));
+    /// let cfg = Config::default().deprecate("oldcmd");
+    /// assert!(cfg.deprecated_commands.contains("oldcmd"));
     /// ```
     #[must_use]
     pub fn deprecate(mut self, cmd_path: impl Into<String>) -> Self {
@@ -504,7 +516,8 @@ impl Config {
 
     /// Replace the auto-derived JSON Schema for a specific flag.
     ///
-    /// `cmd_path` is the full space-joined command path and `flag` is the
+    /// `cmd_path` is the space-joined command path (the CLI's own name is
+    /// optional) and `flag` is the
     /// long flag name (without the leading `--`).  The provided `schema` value
     /// is used as-is; auto default/required/enum extraction is skipped.
     ///
@@ -539,7 +552,7 @@ impl Config {
     /// Override the coarse schema type for a flag brontes cannot introspect.
     ///
     /// Use this when a flag uses a custom `value_parser` function whose return
-    /// type is opaque to brontes.  `cmd_path` is the full space-joined command
+    /// type is opaque to brontes.  `cmd_path` is the space-joined command
     /// path; `flag` is the long flag name without `--`.
     ///
     /// ```rust
@@ -710,7 +723,8 @@ impl Config {
 
     /// Override [`DescriptionMode`] for a specific command path.
     ///
-    /// `cmd_path` is the full space-joined command path (e.g.,
+    /// `cmd_path` is the space-joined command path, the CLI's own name
+    /// optional (e.g.,
     /// `"my-cli module list"`).  When set, this entry wins over
     /// [`Config::description_mode`] for that one command.  A
     /// [`Config::description`] entry for the same path wins over this.
@@ -737,7 +751,8 @@ impl Config {
 
     /// Replace the entire MCP tool description for a specific command path.
     ///
-    /// `cmd_path` is the full space-joined command path; `text` is the literal
+    /// `cmd_path` is the space-joined command path (the CLI's own name is
+    /// optional); `text` is the literal
     /// description string sent to MCP clients.  When set, the stored text
     /// bypasses the `long_about`/`about`/`after_help` cascade entirely for
     /// that command — useful for surfacing LLM-specific guidance (preconditions,
@@ -851,20 +866,20 @@ impl Config {
 
     /// Override [`TaskMode`] for a specific command path.
     ///
-    /// The path is the full space-separated command path as it appears in the
-    /// walked tree (`"anodizer release"`), not the MCP tool name.  A path
-    /// matching no walked command is an [`crate::Error::Config`] from
-    /// `generate_tools` rather than a silently ignored entry.
+    /// The path is the space-separated command path (the CLI's own name is
+    /// optional), not the MCP tool name.  A path matching no walked command is
+    /// an [`crate::Error::Config`] from `generate_tools` rather than a
+    /// silently ignored entry.
     ///
     /// ```rust
     /// use brontes::{Config, TaskMode};
     ///
     /// let cfg = Config::default()
-    ///     .task_mode_for("anodizer release", TaskMode::Detached)
-    ///     .task_mode_for("anodizer publish", TaskMode::Detached);
+    ///     .task_mode_for("release", TaskMode::Detached)
+    ///     .task_mode_for("publish", TaskMode::Detached);
     ///
-    /// assert_eq!(cfg.resolved_task_mode("anodizer release"), TaskMode::Detached);
-    /// assert_eq!(cfg.resolved_task_mode("anodizer version"), TaskMode::Blocking);
+    /// assert_eq!(cfg.resolved_task_mode("release"), TaskMode::Detached);
+    /// assert_eq!(cfg.resolved_task_mode("version"), TaskMode::Blocking);
     /// ```
     #[must_use]
     pub fn task_mode_for(mut self, cmd_path: impl Into<String>, mode: TaskMode) -> Self {

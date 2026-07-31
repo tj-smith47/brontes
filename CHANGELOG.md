@@ -6,7 +6,7 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ### Changed
 
-- Command selection paths no longer require the CLI's own name. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command` and for group members in `Config::group`. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
+- Command paths no longer require the CLI's own name, anywhere they are written. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command`, for group members in `Config::group`, and for every path-keyed builder on `Config` — `annotation`, `deprecate`, `description`, `description_mode_for`, `task_mode_for`, `promote_flag`, `promote_flag_as`, `flag_schema`, and `flag_type_override`. `Selector` command matchers are the one surface that still sees the resolved path, because a closure has nothing to resolve. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
 
 
 ### Added

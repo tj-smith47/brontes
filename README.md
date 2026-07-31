@@ -502,8 +502,8 @@ one you name:
 use brontes::Config;
 
 let cfg = Config::default()
-    .promote_flag("myapp deploy", "region")               // Mcp-Param-region
-    .promote_flag_as("myapp deploy", "api-key", "Api-Key"); // Mcp-Param-Api-Key
+    .promote_flag("deploy", "region")               // Mcp-Param-region
+    .promote_flag_as("deploy", "api-key", "Api-Key"); // Mcp-Param-Api-Key
 ```
 
 ```text
@@ -558,8 +558,8 @@ use std::time::Duration;
 use brontes::{Config, TaskMode};
 
 let cfg = Config::default()
-    .task_mode_for("anodizer release", TaskMode::Detached)
-    .task_mode_for("anodizer publish", TaskMode::Detached)
+    .task_mode_for("release", TaskMode::Detached)
+    .task_mode_for("publish", TaskMode::Detached)
     .task_poll_interval(Duration::from_secs(2));
 ```
 

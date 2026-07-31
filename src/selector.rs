@@ -48,6 +48,12 @@ use crate::{
 /// space-joined path of each candidate command. Return `true` to claim the
 /// command for this selector.
 ///
+/// The path always starts at the CLI's own name. Everywhere else a command
+/// path is *written* — a [`Config`](crate::Config) key, a group member, a
+/// `--command` flag — the leading name may be omitted, because brontes can
+/// fill it in. A matcher is a closure, so there is nothing to fill in: it
+/// sees the resolved path and must match against that.
+///
 /// # Example
 ///
 /// ```rust

@@ -236,8 +236,12 @@ pub fn covers(entry: &str, path: &str) -> bool {
 /// A CLI with a subcommand named after itself addresses it with the root
 /// spelled twice (`"anodizer anodizer"`), since the leading segment is read
 /// as the root first.
+/// Only a well-formed path is resolved. One carrying stray whitespace is
+/// returned untouched, so the error that follows names what the caller wrote
+/// rather than a resolved form they never typed.
 pub fn absolute(entry: &str, root: &str) -> String {
-    if entry.is_empty() || covers(root, entry) {
+    let malformed = entry.is_empty() || entry != entry.trim() || entry.contains("  ");
+    if malformed || covers(root, entry) {
         entry.to_owned()
     } else {
         format!("{root} {entry}")
@@ -272,6 +276,18 @@ mod tests {
         assert!(!covers("cli rel", "cli release"));
         assert!(!covers("cli release", "cli"));
         assert!(!covers("cli release", "cli releases"));
+    }
+
+    #[test]
+    fn absolute_resolves_a_relative_path_and_leaves_the_rest_alone() {
+        assert_eq!(absolute("release", "cli"), "cli release");
+        assert_eq!(absolute("release notes", "cli"), "cli release notes");
+        assert_eq!(absolute("cli release", "cli"), "cli release");
+        assert_eq!(absolute("cli", "cli"), "cli");
+        // A malformed path stays verbatim so the error names what was written.
+        assert_eq!(absolute("", "cli"), "");
+        assert_eq!(absolute(" cli release ", "cli"), " cli release ");
+        assert_eq!(absolute("cli  release", "cli"), "cli  release");
     }
 
     #[test]

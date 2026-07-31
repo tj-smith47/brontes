@@ -33,6 +33,23 @@ skip = [
     # `ring` release outside brontes' control. Re-evaluate when
     # `ring >= 0.18` lands.
     { name = "getrandom", version = "0.2" },
+
+    # `base64` 0.22.x vs 0.23.x
+    # 0.22: pulled in by `hyper-util` and `reqwest`.
+    # 0.23: pulled in by `rmcp 3`.
+    # Both are current releases of their own dependents, so there is no
+    # version of either that resolves onto the other. Re-evaluate when
+    # `hyper-util` and `reqwest` move to `base64 0.23`.
+    { name = "base64", version = "0.22" },
+
+    # `syn` 2.x vs 3.x
+    # 2.x: held by `clap_derive`, `darling` (via `rmcp-macros`), `displaydoc`,
+    #      `schemars_derive`, `tokio-macros`, and the rest of the proc-macro
+    #      layer under them.
+    # 3.x: already adopted by `serde_derive`, `async-trait`, `ref-cast-impl`.
+    # This is the ecosystem mid-migration; the split closes as the remaining
+    # proc-macro crates cut releases on `syn 3`. Both are compile-time only.
+    { name = "syn", version = "2" },
 ]
 
 [sources]

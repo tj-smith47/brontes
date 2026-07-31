@@ -57,13 +57,10 @@ fn annotation_keys_by_full_command_path() {
     assert_eq!(ann.read_only_hint, Some(true));
     assert_eq!(ann.title.as_deref(), Some("Get-Operation"));
 
-    // Negative case: keying on the leaf-only name "get" (without the root
-    // "testcli" prefix) is NOT a valid annotation key for brontes. The build
-    // surfaces the mistake as Error::Config rather than silently ignoring it,
-    // which is the audit-friendlier behavior. This pins both halves of the
-    // contract: keys must be the full path, AND wrong keys fail loudly.
+    // The root's own name is optional: "get" and "testcli get" name the same
+    // command, because brontes supplies the segment it already knows.
     let root2 = Command::new("testcli").subcommand(Command::new("get").about("Get a resource"));
-    let cfg_bad = Config::default().annotation(
+    let cfg_relative = Config::default().annotation(
         "get",
         ToolAnnotations {
             title: Some("Get-Operation".into()),
@@ -71,17 +68,29 @@ fn annotation_keys_by_full_command_path() {
             ..Default::default()
         },
     );
+    let relative = brontes::generate_tools(&root2, &cfg_relative)
+        .expect("a leaf-only key resolves against the root");
+    assert_eq!(
+        relative[1]
+            .annotations
+            .as_ref()
+            .and_then(|a| a.title.clone()),
+        Some("Get-Operation".to_string()),
+        "a relative key must reach the same command a full path does"
+    );
 
-    let result = brontes::generate_tools(&root2, &cfg_bad);
-    match result {
+    // A key that names nothing still fails loudly rather than being ignored,
+    // which is the audit-friendlier half of the contract.
+    let cfg_bad = Config::default().annotation("nope", ToolAnnotations::default());
+    match brontes::generate_tools(&root2, &cfg_bad) {
         Err(Error::Config(msg)) => {
             assert!(
-                msg.contains("\"get\""),
+                msg.contains("nope"),
                 "expected error message to mention the offending key, got: {msg:?}"
             );
         }
         other => {
-            panic!("leaf-only annotation key must be rejected with Error::Config; got: {other:?}")
+            panic!("an unknown annotation key must be rejected with Error::Config; got: {other:?}")
         }
     }
 }

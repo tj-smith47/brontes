@@ -753,3 +753,75 @@ fn the_root_command_itself_is_still_addressable() {
         names(&Config::default())
     );
 }
+
+#[test]
+fn every_config_path_key_may_omit_the_root_command_name() {
+    // The whole `Config` surface has to read one way. A user who learns
+    // `--command release` and then writes `deprecate("anodizer secrets")`
+    // because the builders disagree is being taxed for our inconsistency.
+    use brontes::{DescriptionMode, TaskMode};
+
+    let relative = Config::default()
+        .description("release", "Cut a release, carefully")
+        .description_mode_for("release", DescriptionMode::Short)
+        .task_mode_for("release", TaskMode::Detached)
+        .deprecate("releases");
+    let absolute = Config::default()
+        .description("demo release", "Cut a release, carefully")
+        .description_mode_for("demo release", DescriptionMode::Short)
+        .task_mode_for("demo release", TaskMode::Detached)
+        .deprecate("demo releases");
+
+    let from_relative = generate_tools(&cli(), &relative).expect("relative paths resolve");
+    let from_absolute = generate_tools(&cli(), &absolute).expect("absolute paths resolve");
+
+    assert_eq!(
+        from_relative
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<_>>(),
+        from_absolute
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<_>>(),
+        "deprecation must drop the same command either way"
+    );
+    let described = from_relative
+        .iter()
+        .find(|t| t.name.as_ref() == "demo_release")
+        .expect("demo_release is served");
+    assert_eq!(
+        described.description.as_deref(),
+        Some("Cut a release, carefully"),
+        "a relative path must reach the description override"
+    );
+}
+
+#[test]
+fn a_promoted_flag_takes_a_relative_path() {
+    let cli = Command::new("demo").subcommand(
+        Command::new("deploy").arg(clap::Arg::new("region").long("region").value_name("R")),
+    );
+
+    let relative = generate_tools(&cli, &Config::default().promote_flag("deploy", "region"))
+        .expect("relative promotion resolves");
+    let absolute = generate_tools(
+        &cli,
+        &Config::default().promote_flag("demo deploy", "region"),
+    )
+    .expect("absolute promotion resolves");
+
+    let promoted = |tools: &[rmcp::model::Tool]| {
+        tools
+            .iter()
+            .find(|t| t.name.as_ref() == "demo_deploy")
+            .and_then(|t| t.input_schema.get("properties").cloned())
+            .expect("deploy tool with properties")
+    };
+    assert_eq!(promoted(&relative), promoted(&absolute));
+    assert!(
+        promoted(&relative).get("region").is_some(),
+        "the promoted flag must be hoisted to the top level: {:?}",
+        promoted(&relative)
+    );
+}
