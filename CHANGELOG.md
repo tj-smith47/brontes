@@ -13,6 +13,7 @@ All notable changes to this project are documented here. Format adapted from [Ke
 - The Tasks extension (SEP-2663, `io.modelcontextprotocol/tasks`). `Config::task_mode_for(path, TaskMode::Detached)` answers `tools/call` with a task handle instead of blocking for the length of the command, which is the difference between a wrapped `version` and a wrapped `release`: the client polls `tasks/get` for status and the final result, answers a middleware's input request with `tasks/update`, and stops the process with `tasks/cancel`. The middleware boundary is unchanged — an input request raised inside a task leaves through `tasks/get` and the chain re-enters with `input_responses` populated exactly as on a blocking retry. Detaching is never a compatibility break: a client that did not declare the extension gets the blocking result whatever the config says, and brontes advertises the `tasks` capability only when some command is actually detached. `Config::task_ttl` bounds runtime and retention (unset, the default, means no time limit), and `Config::task_poll_interval` paces clients.
 - MRTR support (SEP-2322) at the middleware boundary. A middleware returns `MiddlewareOutcome::InputRequired` to ask the client for input — under the stateless revision the only channel a server has for reaching its client — and the retry arrives with `MiddlewareCtx::input_responses` and `MiddlewareCtx::request_state` populated. brontes refuses to emit an input request a peer cannot answer (protocol older than `2026-07-28`, or elicitation requested from a client that never declared the capability), degrading to a tool error rather than a protocol-level failure.
 - W3C Trace Context propagation (SEP-414). A validated `traceparent` / `tracestate` / `baggage` from the request's `_meta` reaches the spawned CLI as `TRACEPARENT` / `TRACESTATE` / `BAGGAGE`, so a CLI's own spans join the caller's trace. Malformed values are dropped rather than forwarded, and `Config::propagate_trace_context(false)` opts out without disturbing `Config::default_env`. Middleware reads the parsed values through `MiddlewareCtx::trace_context` regardless of the setting.
+- Command groups and launch-time tool selection, for CLIs whose command tree is larger than any one job needs. A CLI's author names bundles with `Config::group(name, paths)` and `Config::group_description(name, text)`; end users then start a server carrying only part of the tool list, with `--group` / `--command` / `--tool` and the matching `--hide-group` / `--hide-command` / `--hide-tool` on `mcp start`, `mcp stream`, and `mcp tools`. `mcp tools --groups` lists what a CLI defines. The same flags on `mcp <editor> enable` are written into the `mcp start` argv the editor registers, so a selection survives the install command. Group members and `--command` paths cover their whole subtree and match on path segments; hiding beats selecting, and a `hide_*` pinned in `Config` cannot be undone from the launch line. A selection naming something the CLI does not have — or matching nothing at all — fails at startup naming the typo, rather than serving a tool list nobody asked for. `Config::expose_group` / `expose_command` / `expose_tool` / `hide_group` / `hide_command` / `hide_tool` pin a selection programmatically, and `brontes::Group` / `brontes::ToolFilter` are the shapes behind both surfaces.
 - `MiddlewareCtx` now also carries the request's raw `_meta` (including the progress token), the negotiated `protocol_version`, and the client's declared `client_capabilities`.
 - The `rmcp` types appearing on brontes' own surface are re-exported (`ClientCapabilities`, `ProtocolVersion`, `RequestMetaObject`, the MRTR and elicitation types), so consuming the middleware boundary needs no direct `rmcp` dependency and cannot mismatch the version brontes links. `RequestStateCodec` / `SealOptions` follow behind the `request-state` feature, for middleware that must verify an echoed `requestState`.
 
@@ -20,17 +21,46 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 - `clap::ArgAction::Count` flags rendered as `--flag N`, a form clap rejects outright because a `Count` arg parses with `num_args(0)` — the flag was unusable through MCP. It now renders as repetition (`--flag --flag`). The render kind is derived from the arg's action rather than from the advertised JSON Schema type, so a `Config::flag_type_override` can no longer change how a flag is executed.
 - Tool errors did not satisfy the `outputSchema` every tool advertises. A failed call now returns a conforming `ToolOutput` as `structuredContent`, with the brontes-specific detail moved to namespaced `_meta` keys.
-- Under `mcp stream`, every request built its own server handler, so a task created by `tools/call` was unreachable from the `tasks/get` that followed it (`unknown task`) — the stateless revision has no session to keep them together. One handler is now shared across sessions, which also makes the `clap` walk a startup cost rather than a per-request one.
+- Under `mcp stream`, every inbound request rebuilt the server handler and re-walked the `clap` tree. The walk is now a startup cost, paid once and shared across connections.
 - Every `tools/call` had to spell out both `flags` and `args`, even for a command that takes neither: the tool input schema listed them as required and omitting `args` failed with `missing field args`. Both are now optional and default to empty, so the minimal call is `{}`. Callers that still send them are unaffected.
 - `flags.additionalProperties: false` was advertised but unenforced — nothing in the MCP layer validates call arguments against the input schema, so an unknown flag reached the CLI as an opaque usage error. Unknown flag names are now rejected before the command runs, reported together and sorted.
+- `mcp stream` logged `MCP server listening on address …` before validating the configuration, so a config or schema error printed a running server and then exited non-zero. The `clap` walk now happens before the bind, and the log line after it.
 - Published tool schemas carried brontes' own rustdoc as `title` / `description` on the `ToolInput` and `ToolOutput` wrappers, spending the model's context on prose about brontes' Rust types. Stripping it cut the generated tool-list fixture by more than half.
-
-- `brontes::DescriptionMode` (`Short` / `Long`, default `Long`) plus `Config::description_mode`, `Config::description_mode_for(path, mode)`, and `Config::description(path, text)` for controlling per-tool description text. The literal `description` override bypasses the `long_about`/`about`/`after_help` cascade entirely. Default behavior is unchanged from 0.1.0; consumers opt in surgically per command or globally when verbose `long_about` text wastes the LLM's context budget. Closes the per-command description override gap (the ophis-equivalent of [njayp/ophis#6](https://github.com/njayp/ophis/issues/6), which only partially shipped as PR #7's always-append `cmd.Example`).
 
 ### Changed
 
 - `rmcp` 2.2 → 3.0, the SDK revision implementing MCP `2026-07-28`. Consumers who name `rmcp` types directly — `Config::implementation` takes an `rmcp::model::Implementation` — must move to `rmcp` 3.x in lockstep.
 - **Breaking:** `MiddlewareResult` is now `Result<MiddlewareOutcome>` rather than `Result<ToolOutput>`, so a middleware can answer with an MRTR input request instead of a finished process. `MiddlewareOutcome: From<ToolOutput>` makes the migration a trailing `.into()` on each success path; the change is a compile error at every affected site, never a silent behavior shift.
+- Tools are listed in `clap` declaration order rather than reverse. The order is a tool list's only ranking signal, so it should read the way the CLI's own `--help` does. It remains stable across calls and processes, which is what the revision asks for so clients can cache a listing.
+
+## [0.3.0] - 2026-07-19
+
+### Changed
+
+- `rmcp` 1.6 → 2.2. Consumers naming `rmcp` types directly — `Config::implementation` takes an `rmcp::model::Implementation` — must move in lockstep.
+
+## [0.2.2] - 2026-07-13
+
+### Changed
+
+- Release pipeline publishes to crates.io through OIDC Trusted Publishing rather than a stored token.
+
+## [0.2.1] - 2026-06-26
+
+### Fixed
+
+- `quinn-proto` bumped to 0.11.15 for RUSTSEC-2026-0185.
+
+### Changed
+
+- Release pipeline moved to anodizer's single-crate mode, with attestations and library-appropriate publishers; the tag now writes `Cargo.toml`'s version rather than requiring a manual sync commit.
+
+## [0.2.0] - 2026-05-14
+
+### Added
+
+- Zed editor manager (`mcp zed {enable,disable,list}`), including `--workspace` mode. Zed's `settings.json` also carries the user's theme, font, and keymap, so brontes parses it as JSONC, writes back strict JSON, and preserves every non-`context_servers` top-level key.
+- `brontes::DescriptionMode` (`Short` / `Long`, default `Long`) plus `Config::description_mode`, `Config::description_mode_for(path, mode)`, and `Config::description(path, text)` for controlling per-tool description text. The literal `description` override bypasses the `long_about`/`about`/`after_help` cascade entirely. Default behavior is unchanged from 0.1.0; consumers opt in surgically per command or globally when verbose `long_about` text wastes the LLM's context budget. Closes the per-command description override gap (the ophis-equivalent of [njayp/ophis#6](https://github.com/njayp/ophis/issues/6), which only partially shipped as PR #7's always-append `cmd.Example`).
 
 ## [0.1.0] - 2026-05-13
 
@@ -75,5 +105,9 @@ Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextp
 
 - MSRV is 1.94.
 
-[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tj-smith47/brontes/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/tj-smith47/brontes/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/tj-smith47/brontes/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/tj-smith47/brontes/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tj-smith47/brontes/releases/tag/v0.1.0

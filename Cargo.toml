@@ -3,7 +3,7 @@ name = "brontes"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.94"
-description = "Transform any clap CLI into an MCP server."
+description = "Turn any clap CLI into an MCP server. Supports MCP 2026-07-28."
 authors = ["TJ Smith"]
 license = "MIT"
 repository = "https://github.com/tj-smith47/brontes"
@@ -11,7 +11,12 @@ homepage = "https://github.com/tj-smith47/brontes"
 documentation = "https://docs.rs/brontes"
 readme = "README.md"
 keywords = ["cli", "clap", "mcp", "ai", "server"]
-categories = ["command-line-interface", "development-tools"]
+categories = [
+    "command-line-interface",
+    "development-tools",
+    "api-bindings",
+    "web-programming::http-server",
+]
 # Keep the published .crate tarball lean: developer-only configuration,
 # release scaffolding, and CI workflows do not belong in consumer crates.
 exclude = [
