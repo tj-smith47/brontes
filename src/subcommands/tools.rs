@@ -105,7 +105,8 @@ fn list_groups(cli: &Command, cfg: &Config) -> Result<()> {
     // CLI define", which does not change because one server was started with
     // a subset — and a `Config`-pinned filter would otherwise make the listing
     // report zeroes, or refuse to run at all.
-    let mut unfiltered = cfg.clone();
+    let cfg = crate::command::normalize_selection_paths(cfg, cli.get_name());
+    let mut unfiltered = cfg.clone().into_owned();
     unfiltered.tool_filter = crate::ToolFilter::default();
     let tools = crate::command::generate_tools_with_middleware(cli, &unfiltered)?;
 

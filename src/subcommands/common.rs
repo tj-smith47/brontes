@@ -29,7 +29,7 @@ pub const SELECTION_FLAGS: [(&str, &str, &str, &str); 6] = [
         "command",
         "command",
         "PATH",
-        "Restrict the tool list to this command and its subcommands, e.g. --command \"cli release\" (repeat to add commands)",
+        "Restrict the tool list to this command and its subcommands, e.g. --command release (repeat to add commands)",
     ),
     (
         "tool",
@@ -47,7 +47,7 @@ pub const SELECTION_FLAGS: [(&str, &str, &str, &str); 6] = [
         "hide-command",
         "hide-command",
         "PATH",
-        "Remove this command and its subcommands (repeat for several)",
+        "Remove this command and its subcommands, e.g. --hide-command secrets (repeat to add commands)",
     ),
     (
         "hide-tool",

@@ -4,20 +4,41 @@
 
 # brontes
 
-A Rust library that transforms `clap` CLIs into [MCP](https://modelcontextprotocol.io) servers.
+A Rust library that transforms [`clap`](https://docs.rs/clap) CLIs into [MCP](https://modelcontextprotocol.io) servers. Inspired by [njayp/ophis](https://github.com/njayp/ophis).
 
 [![CI](https://github.com/tj-smith47/brontes/actions/workflows/ci.yml/badge.svg)](https://github.com/tj-smith47/brontes/actions/workflows/ci.yml)
 [![Release](https://github.com/tj-smith47/brontes/actions/workflows/release.yml/badge.svg)](https://github.com/tj-smith47/brontes/actions/workflows/release.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/tj-smith47/brontes/badges/coverage.json)](https://github.com/tj-smith47/brontes/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/brontes.svg)](https://crates.io/crates/brontes)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 </div>
 
 > *brontes* (Greek: thunder). In myth, the Cyclops smith who forged Zeus's thunderbolts. This crate forges clap CLIs into MCP servers.
 
-Inspired by [njayp/ophis](https://github.com/njayp/ophis).
-
 > **Status:** Beta — used in production by anodizer + cfgd; APIs stabilizing toward 1.0.
+
+## Contents
+
+**Start here**
+
+- [Why brontes](#why-brontes) — what it does and why it's shaped this way
+- [Quick start](#quick-start) — two lines on an existing CLI
+- [How it works](#how-it-works) — the walker, the runtime, the editor configs
+
+**Running a server**
+
+- [Editor integration](#editor-integration) — Claude Desktop, Cursor, VSCode, Zed
+- [Trimming the tool list](#trimming-the-tool-list) — groups and selection flags
+- [Features](#features) — the full surface at a glance
+
+**Going further**
+
+- [Advanced](#advanced) — middleware, descriptions, env, schema overrides, HTTP
+- [Protocol support](#protocol-support) — what `2026-07-28` changed, cache hints, header promotion, tasks
+- [API reference](#api-reference) — every public item
+- [Releasing an MCP server built with brontes](#releasing-an-mcp-server-built-with-brontes)
+- [Contributing](#contributing) · [License](#license)
 
 ## Why brontes
 
@@ -41,6 +62,41 @@ Inspired by [njayp/ophis](https://github.com/njayp/ophis).
 - **Sensible defaults.** HTTP is loopback-only until you widen it. A config
   that names a command you don't have fails at startup, not on the first
   request.
+
+## Quick start
+
+Two lines mount and dispatch the `mcp` subtree on any existing `clap` CLI:
+
+```rust
+use clap::Command;
+
+#[tokio::main]
+async fn main() -> brontes::Result<()> {
+    let cli = Command::new("my-cli")
+        .version("0.1.0")
+        .subcommand(Command::new("greet").about("Say hi"))
+        .subcommand(brontes::command(None));                  // [1] mount
+
+    let matches = cli.clone().get_matches();
+    match matches.subcommand() {
+        Some(("mcp",   sub)) => brontes::handle(sub, &cli, None).await,  // [2] dispatch
+        Some(("greet", _))   => { println!("hi"); Ok(()) }
+        _ => Ok(()),
+    }
+}
+```
+
+For tiny CLIs whose only purpose is the MCP server, collapse the ceremony
+into one line with `brontes::run`:
+
+```rust
+use clap::Command;
+
+#[tokio::main]
+async fn main() -> brontes::Result<()> {
+    brontes::run(Command::new("my-cli").version("0.1.0"), None).await
+}
+```
 
 ## How it works
 
@@ -78,41 +134,6 @@ The **walker** recursively visits every `clap::Command`, applies safety filters 
 - Per-flag schema overrides
 
 The **runtime** wraps that tool list in an `rmcp` server and serves it over either stdin/stdout (for editor-launched processes) or streamable HTTP (for sidecar deployments). Tool invocations re-enter your binary as ordinary clap argv, so the same code path serves humans and agents.
-
-## Quick start
-
-Two lines mount and dispatch the `mcp` subtree on any existing `clap` CLI:
-
-```rust
-use clap::Command;
-
-#[tokio::main]
-async fn main() -> brontes::Result<()> {
-    let cli = Command::new("my-cli")
-        .version("0.1.0")
-        .subcommand(Command::new("greet").about("Say hi"))
-        .subcommand(brontes::command(None));                  // [1] mount
-
-    let matches = cli.clone().get_matches();
-    match matches.subcommand() {
-        Some(("mcp",   sub)) => brontes::handle(sub, &cli, None).await,  // [2] dispatch
-        Some(("greet", _))   => { println!("hi"); Ok(()) }
-        _ => Ok(()),
-    }
-}
-```
-
-For tiny CLIs whose only purpose is the MCP server, collapse the ceremony
-into one line with `brontes::run`:
-
-```rust
-use clap::Command;
-
-#[tokio::main]
-async fn main() -> brontes::Result<()> {
-    brontes::run(Command::new("my-cli").version("0.1.0"), None).await
-}
-```
 
 ## Editor integration
 
@@ -185,9 +206,9 @@ Group the commands that go together:
 use brontes::Config;
 
 let cfg = Config::default()
-    .group("release", ["anodizer release", "anodizer publish"])
+    .group("release", ["release", "publish"])
     .group_description("release", "Cut, sign, and publish a release")
-    .group("inspect", ["anodizer status", "anodizer verify"])
+    .group("inspect", ["status", "verify"])
     .group_description("inspect", "Read-only checks");
 ```
 
@@ -199,7 +220,7 @@ inspect  2 tools  Read-only checks
 release  3 tools  Cut, sign, and publish a release
 
 $ anodizer mcp start --group release
-$ anodizer mcp start --command "anodizer release" --command "anodizer publish"
+$ anodizer mcp start --command release --command publish
 $ anodizer mcp start --tool anodizer_release --tool anodizer_publish
 $ anodizer mcp start --group release --hide-tool anodizer_release_notes
 ```
@@ -225,12 +246,15 @@ $ anodizer mcp claude enable --group release
 
 Details worth knowing:
 
-- A group or `--command` covers the whole subtree — `"anodizer release"` picks
-  up `anodizer release notes` too, so groups don't go stale when you add a
+- Paths are relative to the CLI itself: `--command release`, not
+  `--command "anodizer release"`. Both work, since the leading segment is read
+  as the CLI's own name when it matches.
+- A group or `--command` covers the whole subtree — `release` picks up
+  `anodizer release notes` too, so groups don't go stale when you add a
   subcommand. Use `--tool` when you want a command without its children.
-- Matching respects path boundaries: `--command "anodizer release"` won't grab
-  `anodizer releases`. Paths are written with the command's real name — a clap
-  alias isn't a path.
+- Matching respects path boundaries: `--command release` won't grab
+  `anodizer releases`. Paths use the command's real name — a clap alias isn't
+  a path.
 - Removing beats selecting, and a `hide_*` set in `Config` can't be overridden
   from the command line.
 - Everything you ask for has to arrive. A name the CLI doesn't have fails at
@@ -244,7 +268,7 @@ Details worth knowing:
   $ anodizer mcp start --group relase
   Error: Config("no such group \"relase\"; this CLI defines inspect, release")
 
-  $ anodizer mcp start --command "anodizer publish"
+  $ anodizer mcp start --command publish
   Error: Config("command \"anodizer publish\" was selected but exposes no tools;
   it is removed by a hide flag, deprecated, or excluded by a selector")
   ```
@@ -482,28 +506,28 @@ let cfg = Config::default()
     .promote_flag_as("myapp deploy", "api-key", "Api-Key"); // Mcp-Param-Api-Key
 ```
 
-```jsonc
-// tools/list — before                    // tools/list — after
-{                                         {
-  "properties": {                           "properties": {
-    "flags": {                                "flags": {
-      "properties": {                           "properties": {
-        "region": { "type": "string" }            /* region is gone */
-      }                                         }
-    },                                        },
-    "args": { "type": "array" }               "args": { "type": "array" },
-  }                                           "region": {
-}                                               "type": "string",
-                                                "x-mcp-header": "region"
-                                              }
-                                            }
+```text
+tools/list — before                     tools/list — after
+{                                       {
+  "properties": {                         "properties": {
+    "flags": {                              "flags": {
+      "properties": {                         "properties": {}
+        "region": { … }                     },
+      }                                     "args": { "type": "array" },
+    },                                      "region": {
+    "args": { "type": "array" }               "type": "string",
+  }                                           "x-mcp-header": "region"
+}                                           }
                                           }
+                                        }
 ```
 
-```jsonc
-// tools/call — the promoted flag travels at the top level…
+The promoted flag then travels at the top level of `tools/call`:
+
+```json
 { "region": "us-east-1", "flags": { "dry-run": true }, "args": [] }
 ```
+
 ```http
 Mcp-Param-region: us-east-1
 ```
@@ -539,17 +563,22 @@ let cfg = Config::default()
     .task_poll_interval(Duration::from_secs(2));
 ```
 
-```jsonc
-// tools/call — answered immediately
-{ "resultType": "task", "task": { "taskId": "0b7f…", "status": "working",
-                                  "pollIntervalMs": 2000 } }
+`tools/call` is answered immediately, with a handle instead of a result:
 
-// tasks/get — while it runs
+```json
+{ "resultType": "task", "task": { "taskId": "0b7f…", "status": "working", "pollIntervalMs": 2000 } }
+```
+
+`tasks/get` reports progress while it runs:
+
+```json
 { "taskId": "0b7f…", "status": "working", "statusMessage": "running anodizer release" }
+```
 
-// tasks/get — once it exits, carrying the same result a blocking call returns
-{ "taskId": "0b7f…", "status": "completed",
-  "result": { "structuredContent": { "stdout": "…", "exit_code": 0 } } }
+and once it exits, carries the same result a blocking call would have returned:
+
+```json
+{ "taskId": "0b7f…", "status": "completed", "result": { "structuredContent": { "stdout": "…", "exit_code": 0 } } }
 ```
 
 `tasks/cancel` kills the process; the task settles as `cancelled`. A command

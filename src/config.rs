@@ -925,8 +925,8 @@ impl Config {
     /// Name a bundle of commands an end user can select with
     /// `--group <NAME>`.
     ///
-    /// Each entry covers its own subtree, so naming `"anodizer release"` also
-    /// takes `"anodizer release notes"` — the group tracks the command tree
+    /// Each entry covers its own subtree, so naming `"release"` also takes
+    /// `"release notes"` — the group tracks the command tree
     /// rather than drifting from it as subcommands are added.  Calling this
     /// twice with the same name appends to the existing group.
     ///
@@ -937,7 +937,7 @@ impl Config {
     /// ```rust
     /// use brontes::Config;
     ///
-    /// let cfg = Config::default().group("release", ["anodizer release", "anodizer publish"]);
+    /// let cfg = Config::default().group("release", ["release", "publish"]);
     /// assert_eq!(cfg.groups["release"].commands.len(), 2);
     /// ```
     #[must_use]
@@ -963,7 +963,7 @@ impl Config {
     /// use brontes::Config;
     ///
     /// let cfg = Config::default()
-    ///     .group("release", ["anodizer release"])
+    ///     .group("release", ["release"])
     ///     .group_description("release", "Cut, sign, and publish a release");
     /// assert!(cfg.groups["release"].description.is_some());
     /// ```
@@ -987,7 +987,7 @@ impl Config {
     /// use brontes::Config;
     ///
     /// let cfg = Config::default()
-    ///     .group("release", ["anodizer release"])
+    ///     .group("release", ["release"])
     ///     .expose_group("release");
     /// assert!(cfg.tool_filter.groups.contains("release"));
     /// ```
@@ -1002,8 +1002,8 @@ impl Config {
     /// ```rust
     /// use brontes::Config;
     ///
-    /// let cfg = Config::default().expose_command("anodizer release");
-    /// assert!(cfg.tool_filter.commands.contains("anodizer release"));
+    /// let cfg = Config::default().expose_command("release");
+    /// assert!(cfg.tool_filter.commands.contains("release"));
     /// ```
     #[must_use]
     pub fn expose_command(mut self, cmd_path: impl Into<String>) -> Self {
@@ -1037,7 +1037,7 @@ impl Config {
     /// use brontes::Config;
     ///
     /// let cfg = Config::default()
-    ///     .group("dangerous", ["anodizer secrets"])
+    ///     .group("dangerous", ["secrets"])
     ///     .hide_group("dangerous");
     /// assert!(cfg.tool_filter.hidden_groups.contains("dangerous"));
     /// ```
@@ -1053,8 +1053,8 @@ impl Config {
     /// ```rust
     /// use brontes::Config;
     ///
-    /// let cfg = Config::default().hide_command("anodizer secrets");
-    /// assert!(cfg.tool_filter.hidden_commands.contains("anodizer secrets"));
+    /// let cfg = Config::default().hide_command("secrets");
+    /// assert!(cfg.tool_filter.hidden_commands.contains("secrets"));
     /// ```
     #[must_use]
     pub fn hide_command(mut self, cmd_path: impl Into<String>) -> Self {

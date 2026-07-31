@@ -16,14 +16,14 @@
 //!
 //! // Developer, in the CLI's own source:
 //! let cfg = Config::default()
-//!     .group("release", ["anodizer release", "anodizer publish"])
+//!     .group("release", ["release", "publish"])
 //!     .group_description("release", "Cut, sign, and publish a release");
 //! ```
 //!
 //! ```text
 //! # End user, at launch:
 //! $ anodizer mcp start --group release
-//! $ anodizer mcp start --command "anodizer release" --hide-tool anodizer_release_notes
+//! $ anodizer mcp start --command release --hide-tool anodizer_release_notes
 //! $ anodizer mcp tools --groups
 //! ```
 //!
@@ -40,10 +40,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// A named bundle of commands, defined by the CLI's author.
 ///
-/// Membership covers a command and everything under it: naming
-/// `"anodizer release"` also takes `"anodizer release notes"`. That way the
-/// group tracks the command tree instead of drifting from it whenever a
-/// subcommand is added.
+/// Membership covers a command and everything under it: naming `"release"`
+/// also takes `"release notes"`. That way the group tracks the command tree
+/// instead of drifting from it whenever a subcommand is added.
+///
+/// Paths are written relative to the CLI's own name, which brontes supplies —
+/// `"release"` and `"anodizer release"` name the same command.
 ///
 /// Construct through [`crate::Config::group`] and
 /// [`crate::Config::group_description`] rather than by struct literal.
@@ -67,7 +69,7 @@ pub struct Group {
 ///    is then removed.
 ///
 /// Hiding always wins over exposing, so `--group release --hide-command
-/// "anodizer release notes"` reads the way it looks.
+/// "release notes"` reads the way it looks.
 ///
 /// Every name, exposed or hidden, has to be one the CLI actually has; a typo
 /// is a startup error rather than a silent no-op. Exposing entries are held to
@@ -178,6 +180,20 @@ impl ToolFilter {
         covers_any(&exposed_paths, command_path) || self.tools.contains(tool_name)
     }
 
+    /// Rewrite every command path through [`absolute`], so the matcher only
+    /// ever sees paths that start at the root.
+    pub(crate) fn normalized(&self, root: &str) -> Self {
+        let resolve = |paths: &BTreeSet<String>| paths.iter().map(|p| absolute(p, root)).collect();
+        Self {
+            groups: self.groups.clone(),
+            commands: resolve(&self.commands),
+            tools: self.tools.clone(),
+            hidden_groups: self.hidden_groups.clone(),
+            hidden_commands: resolve(&self.hidden_commands),
+            hidden_tools: self.hidden_tools.clone(),
+        }
+    }
+
     /// Every command path this filter names, exposed or hidden, with the
     /// groups already expanded. Used to report the ones that match nothing.
     pub(crate) fn named_paths(&self, groups: &BTreeMap<String, Group>) -> BTreeSet<String> {
@@ -206,6 +222,26 @@ pub fn covers(entry: &str, path: &str) -> bool {
         || path
             .strip_prefix(entry)
             .is_some_and(|rest| rest.starts_with(' '))
+}
+
+/// Resolve a selection path against the root command's name.
+///
+/// The root name is the one segment brontes can always derive — it is the
+/// binary the user just invoked — so requiring it in `--command "anodizer
+/// release"` is asking them to retype it. A path whose first segment is
+/// already the root is absolute and returned unchanged; anything else is
+/// taken as relative to the root. `"release notes"` and `"anodizer release
+/// notes"` therefore name the same command.
+///
+/// A CLI with a subcommand named after itself addresses it with the root
+/// spelled twice (`"anodizer anodizer"`), since the leading segment is read
+/// as the root first.
+pub fn absolute(entry: &str, root: &str) -> String {
+    if entry.is_empty() || covers(root, entry) {
+        entry.to_owned()
+    } else {
+        format!("{root} {entry}")
+    }
 }
 
 /// Whether any entry in `entries` covers `path`.

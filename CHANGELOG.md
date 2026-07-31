@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+### Changed
+
+- Command selection paths no longer require the CLI's own name. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command` and for group members in `Config::group`. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
+
+
 ### Added
 
 - MCP protocol revision `2026-07-28` support. The revision is stateless — no `initialize`/`notifications/initialized` handshake and no `Mcp-Session-Id` — and brontes serves it end to end: `server/discover` (SEP-2575) reports the supported version set, the `tools`-only capability set, and the host CLI's identity; every result carries the `resultType` discriminator (SEP-2322); and `tools/call` over streamable HTTP validates SEP-2243 standard headers (`Mcp-Method` / `Mcp-Name`). Protocol revisions back to `2024-11-05` continue to negotiate, handshake and session id included.

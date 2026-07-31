@@ -37,6 +37,7 @@
 //! }
 //! ```
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use clap::Command;
@@ -155,7 +156,8 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
     // 1. Walk the (now-built) tree.
     let resolved = crate::walk::walk(&built);
 
-    // 2. Build-time path validation.
+    // 2. Resolve selection paths against the root name, then validate.
+    let cfg = &normalize_selection_paths(cfg, built.get_name());
     validate_paths(&resolved, cfg)?;
 
     // 3. Compute the effective prefix: `tool_name_prefix` override when non-empty,
@@ -383,6 +385,27 @@ fn build_tool_name(path: &str, prefix: &str) -> String {
 // command in the walked tree, so misconfiguration surfaces at startup rather
 // than silently no-oping at request time.
 // ---------------------------------------------------------------------------
+
+/// Rewrite every selection path so it starts at the root command.
+///
+/// Group members and the tool filter's command paths may be written with or
+/// without the CLI's own name; everything downstream — validation, matching,
+/// the `--groups` listing — sees the resolved form. Borrows unchanged when
+/// there is no selection to resolve, which is the common case.
+pub fn normalize_selection_paths<'a>(cfg: &'a Config, root: &str) -> Cow<'a, Config> {
+    if cfg.groups.is_empty() && cfg.tool_filter.is_empty() {
+        return Cow::Borrowed(cfg);
+    }
+
+    let mut out = cfg.clone();
+    for group in out.groups.values_mut() {
+        for member in &mut group.commands {
+            *member = crate::toolset::absolute(member, root);
+        }
+    }
+    out.tool_filter = out.tool_filter.normalized(root);
+    Cow::Owned(out)
+}
 
 /// Reject any command whose own name contains a space.
 ///

@@ -488,7 +488,7 @@ fn a_path_that_is_only_a_prefix_of_a_command_is_rejected() {
         .to_string();
 
     assert!(
-        msg.contains("no such command") && msg.contains("\"my\""),
+        msg.contains("no such command") && msg.contains("my-tool my"),
         "the error must name the path that does not exist: {msg}"
     );
 }
@@ -673,4 +673,83 @@ fn listing_groups_still_works_under_a_pinned_selection() {
         Some(&grouped().expose_group("release")),
     )
     .expect("--groups describes the CLI, not the selection");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Writing a path without the CLI's own name
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn a_path_may_omit_the_root_command_name() {
+    // The root is the binary the user just invoked; making them retype it is
+    // ceremony, so a path is read as relative to the root unless it already
+    // starts there.
+    assert_eq!(
+        names(&Config::default().expose_command("release")),
+        names(&Config::default().expose_command("demo release"))
+    );
+    assert_eq!(
+        names(&Config::default().expose_command("secrets get")),
+        names(&Config::default().expose_command("demo secrets get"))
+    );
+}
+
+#[test]
+fn group_members_may_omit_the_root_command_name() {
+    let relative = Config::default()
+        .group("release", ["release", "publish"])
+        .expose_group("release");
+    let absolute = grouped().expose_group("release");
+
+    assert_eq!(names(&relative), names(&absolute));
+}
+
+#[test]
+fn hiding_takes_a_relative_path_too() {
+    // The two halves of the matrix have to read the same way, or a user who
+    // learns `--command release` gets a silent no-op from `--hide-command`.
+    assert_eq!(
+        names(&Config::default().hide_command("secrets")),
+        names(&Config::default().hide_command("demo secrets"))
+    );
+}
+
+#[test]
+fn the_launch_flags_take_a_relative_path() {
+    let from_flags = brontes::__test_internal::apply_selection_flags(
+        Config::default(),
+        &brontes::__test_internal::start_subcommand()
+            .try_get_matches_from([
+                "start",
+                "--command",
+                "release",
+                "--hide-tool",
+                "demo_release_notes",
+            ])
+            .expect("parses"),
+    );
+
+    assert_eq!(names(&from_flags), vec!["demo_release"]);
+}
+
+#[test]
+fn a_relative_path_that_names_nothing_is_still_rejected() {
+    // Resolving against the root must not turn a typo into a silent miss; the
+    // error names the resolved path so it is obvious what was looked for.
+    let msg = err(&Config::default().expose_command("relase"));
+
+    assert!(
+        msg.contains("no such command") && msg.contains("demo relase"),
+        "the resolved path must be named: {msg}"
+    );
+}
+
+#[test]
+fn the_root_command_itself_is_still_addressable() {
+    // `--command demo` names the root and therefore the whole tree; the
+    // leading segment is read as the root before anything else.
+    assert_eq!(
+        names(&Config::default().expose_command("demo")),
+        names(&Config::default())
+    );
 }
