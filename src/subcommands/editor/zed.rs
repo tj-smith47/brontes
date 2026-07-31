@@ -44,7 +44,7 @@ pub fn build() -> Command {
         .long_about("Manage MCP context_servers configuration for Zed")
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .subcommand(
+        .subcommand(crate::subcommands::common::with_selection_flags(
             Command::new("enable")
                 .about("Add this CLI as an MCP server in Zed")
                 .arg(arg_config_path())
@@ -52,7 +52,7 @@ pub fn build() -> Command {
                 .arg(arg_env())
                 .arg(arg_log_level())
                 .arg(arg_workspace()),
-        )
+        ))
         .subcommand(
             Command::new("disable")
                 .about("Remove this CLI from Zed's MCP context_servers")
@@ -109,6 +109,7 @@ fn run_enable(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
         args.push("--log-level".to_string());
         args.push(level.clone());
     }
+    super::push_selection_flags(&mut args, matches);
 
     let server = ZedServer {
         command: exe.to_string_lossy().into_owned(),

@@ -13,6 +13,12 @@
 //!   the chain re-enters with the answer;
 //! - `tasks/cancel` reaches the running command's cancellation token;
 //! - a middleware that asks forever is stopped rather than left spinning.
+//!
+//! The extension's security model rests on the handle itself: a task id is a
+//! bearer token for the state behind it, so the guarantees a server owes are
+//! that the id is unguessable, that the three task methods are closed to
+//! clients that never negotiated the extension, and that an id the server does
+//! not hold is rejected rather than answered. Each is asserted below.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -651,4 +657,166 @@ async fn a_middleware_that_asks_forever_is_stopped_rather_than_left_spinning() {
     );
 
     shutdown(client, cancel, server_task).await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handle security
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The JSON-RPC code a failed request answered with, or a panic naming what
+/// arrived instead.
+fn mcp_code(err: &rmcp::service::ServiceError) -> rmcp::model::ErrorCode {
+    match err {
+        rmcp::service::ServiceError::McpError(e) => e.code,
+        other => panic!("expected a JSON-RPC error from the server, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_task_is_readable_the_moment_its_handle_is_returned() {
+    // The handle must not be a promise of future state: a client that polls on
+    // the very next line has to find the task, with no speculative retry.
+    let (client, cancel, server_task) =
+        connect(TasksClient, detached_cfg(finishing_middleware("ok\n"))).await;
+
+    let task_id = call_expecting_task(&client).await;
+    let info = client
+        .peer()
+        .get_task(GetTaskParams::new(task_id.clone()))
+        .await
+        .expect("the first poll after the handle must resolve, with no grace period");
+    assert_eq!(info.task.task.task_id, task_id);
+
+    shutdown(client, cancel, server_task).await;
+}
+
+#[tokio::test]
+async fn an_id_the_server_does_not_hold_is_rejected_rather_than_answered() {
+    // A task id is a bearer token, so this is also the answer for a handle
+    // minted by some other process: not held here, not served here. The reply
+    // is the same for a well-formed unknown id as for a malformed one, which
+    // leaves no oracle for probing which ids exist.
+    let (client, cancel, server_task) =
+        connect(TasksClient, detached_cfg(finishing_middleware("ok\n"))).await;
+
+    let mine = call_expecting_task(&client).await;
+    let foreign = uuid_like_but_not(&mine);
+
+    for id in [foreign.as_str(), "not-a-uuid"] {
+        let err = client
+            .peer()
+            .get_task(GetTaskParams::new(id.to_owned()))
+            .await
+            .expect_err("an id the server does not hold must not be served");
+        assert_eq!(
+            mcp_code(&err),
+            rmcp::model::ErrorCode::INVALID_PARAMS,
+            "tasks/get for {id:?} must answer -32602"
+        );
+
+        let err = client
+            .peer()
+            .cancel_task(CancelTaskParams::new(id.to_owned()))
+            .await
+            .expect_err("cancelling an id the server does not hold must fail");
+        assert_eq!(
+            mcp_code(&err),
+            rmcp::model::ErrorCode::INVALID_PARAMS,
+            "tasks/cancel for {id:?} must answer -32602"
+        );
+
+        let err = client
+            .peer()
+            .update_task(UpdateTaskParams::new(id.to_owned(), InputResponses::new()))
+            .await
+            .expect_err("updating an id the server does not hold must fail");
+        assert_eq!(
+            mcp_code(&err),
+            rmcp::model::ErrorCode::INVALID_PARAMS,
+            "tasks/update for {id:?} must answer -32602"
+        );
+    }
+
+    shutdown(client, cancel, server_task).await;
+}
+
+#[tokio::test]
+async fn task_methods_are_closed_to_a_client_that_never_negotiated_the_extension() {
+    // The server advertises tasks (some command is detached) but this client
+    // never declared it. Reaching the store anyway would make the extension's
+    // capability negotiation decorative.
+    let (client, cancel, server_task) =
+        connect(PlainClient, detached_cfg(finishing_middleware("ok\n"))).await;
+
+    let err = client
+        .peer()
+        .get_task(GetTaskParams::new("any-id".to_owned()))
+        .await
+        .expect_err("a non-declaring client must not reach tasks/get");
+    assert_eq!(
+        mcp_code(&err),
+        rmcp::model::ErrorCode::MISSING_REQUIRED_CLIENT_CAPABILITY,
+        "the refusal must name the missing capability rather than the missing task"
+    );
+
+    shutdown(client, cancel, server_task).await;
+}
+
+#[tokio::test]
+async fn handles_are_unguessable_and_never_repeat() {
+    // A handle is a bearer token, so it has to be drawn from a CSPRNG rather
+    // than a counter. A sequence swapped in for the current v4 UUIDs would be
+    // caught by the version/variant assertions and by the fixed-prefix check.
+    let (client, cancel, server_task) =
+        connect(TasksClient, detached_cfg(finishing_middleware("ok\n"))).await;
+
+    let mut ids = Vec::new();
+    for _ in 0..8 {
+        ids.push(call_expecting_task(&client).await);
+    }
+
+    let unique: std::collections::BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "handles must never repeat: {ids:?}"
+    );
+
+    for id in &ids {
+        let uuid: uuid::Uuid = id.parse().unwrap_or_else(|e| {
+            panic!("a handle must be a UUID so its entropy is auditable: {id:?} ({e})")
+        });
+        assert_eq!(
+            uuid.get_version_num(),
+            4,
+            "a handle must be random (v4), not time- or name-derived: {id:?}"
+        );
+        assert_eq!(
+            uuid.get_variant(),
+            uuid::Variant::RFC4122,
+            "a v4 handle carries the RFC 4122 variant: {id:?}"
+        );
+    }
+
+    // 122 random bits means no two handles in a run share even a 4-hex-digit
+    // prefix, which a counter or a per-process seed plus an index would.
+    let prefixes: std::collections::BTreeSet<&str> = ids.iter().map(|id| &id[..4]).collect();
+    assert_eq!(
+        prefixes.len(),
+        ids.len(),
+        "handles sharing a prefix point at a sequence rather than a CSPRNG: {ids:?}"
+    );
+
+    shutdown(client, cancel, server_task).await;
+}
+
+/// A syntactically valid v4 UUID that is not `mine` — the shape a caller
+/// holding somebody else's handle would present.
+fn uuid_like_but_not(mine: &str) -> String {
+    loop {
+        let candidate = uuid::Uuid::new_v4().to_string();
+        if candidate != mine {
+            return candidate;
+        }
+    }
 }

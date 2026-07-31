@@ -231,7 +231,56 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
         });
     }
 
+    // 5. Apply the tool filter last, over generated names, so `--tool` can
+    //    name what a client would see rather than what the clap tree calls it.
+    apply_tool_filter(&mut tools, cfg)?;
+
     Ok(tools)
+}
+
+/// Trim `tools` down to what [`Config::tool_filter`] admits.
+///
+/// Runs after the build because the filter's `tools` / `hidden_tools` sets are
+/// keyed by MCP tool name, which only exists once the prefix has been applied.
+///
+/// # Errors
+///
+/// [`crate::Error::Config`] when the filter names a tool the CLI does not
+/// have, or when it selects nothing. Both are launch-time typos in a flag, and
+/// both would otherwise land as a server that quietly exposes the wrong set —
+/// the failure a client cannot distinguish from a CLI that simply has no such
+/// command.
+fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> {
+    if cfg.tool_filter.is_empty() {
+        return Ok(());
+    }
+
+    let known: HashSet<&str> = tools.iter().map(|t| t.tool.name.as_ref()).collect();
+    for name in cfg.tool_filter.named_tools() {
+        if !known.contains(name.as_str()) {
+            let mut candidates: Vec<&str> = known.iter().copied().collect();
+            candidates.sort_unstable();
+            return Err(crate::Error::Config(format!(
+                "no such tool {name:?}; this CLI exposes {}",
+                candidates.join(", ")
+            )));
+        }
+    }
+
+    tools.retain(|t| {
+        cfg.tool_filter
+            .admits(&cfg.groups, &t.command_path, t.tool.name.as_ref())
+    });
+
+    if tools.is_empty() {
+        return Err(crate::Error::Config(
+            "the requested tool selection matches no commands, which would start a \
+             server with an empty tool list"
+                .to_owned(),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Build the MCP tool name for a command.
@@ -354,6 +403,8 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
         }
     }
 
+    validate_groups_and_filter(&valid_paths, cfg)?;
+
     // Selector factory captured strings (only introspectable matchers).
     for sel in &cfg.selectors {
         if let Some(matcher) = &sel.cmd
@@ -386,6 +437,57 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
                 }
                 _ => {} // flag-matcher kinds not validated here
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Check that every group member and every path the tool filter names points
+/// at a real command.
+///
+/// Membership covers subtrees, so an exact-path check would wrongly reject a
+/// group written against a parent command.
+///
+/// # Errors
+///
+/// [`crate::Error::Config`] naming the offending group, path, or — for an
+/// unknown group name, which is nearly always a typo in a launch flag — the
+/// list of names that would have worked.
+fn validate_groups_and_filter(valid_paths: &HashSet<&str>, cfg: &Config) -> Result<()> {
+    for (name, group) in &cfg.groups {
+        for member in &group.commands {
+            if !valid_paths
+                .iter()
+                .any(|p| crate::toolset::covers(member, p))
+            {
+                return Err(crate::Error::Config(format!(
+                    "group {name:?} references unknown command path {member:?}"
+                )));
+            }
+        }
+    }
+
+    for name in cfg.tool_filter.named_groups() {
+        if !cfg.groups.contains_key(name) {
+            let known: Vec<&str> = cfg.groups.keys().map(String::as_str).collect();
+            return Err(crate::Error::Config(if known.is_empty() {
+                format!("no such group {name:?}; this CLI defines no groups")
+            } else {
+                format!(
+                    "no such group {name:?}; this CLI defines {}",
+                    known.join(", ")
+                )
+            }));
+        }
+    }
+
+    // Group members are already folded into these paths.
+    for path in cfg.tool_filter.named_paths(&cfg.groups) {
+        if !valid_paths.iter().any(|p| crate::toolset::covers(&path, p)) {
+            return Err(crate::Error::Config(format!(
+                "no such command {path:?} to select"
+            )));
         }
     }
 

@@ -134,10 +134,11 @@ pub async fn bind_default_acceptor(addr: SocketAddr) -> Result<TokioTcpAcceptor>
 /// [`SHUTDOWN_GRACE`] (5 seconds) to drain; any still-pending join handles
 /// are abandoned and the function returns.
 ///
-/// The factory closure clones `cli` and `cfg` per request — the walk is
-/// microseconds and the resulting per-session `BrontesServer` is
-/// independent. Constructing one eagerly outside the closure surfaces
-/// schema/config errors at startup rather than at first-request time.
+/// The clap tree is walked once, before the accept loop starts: every
+/// session is handed a clone of that one handler, so schema and config
+/// errors surface at startup rather than on the first inbound request, and
+/// a task created by one request is still there for the `tasks/get` that
+/// follows it.
 ///
 /// This is the production entry point; internally it delegates to
 /// [`serve_http_with`] after binding a [`TokioTcpAcceptor`] at `addr`.
@@ -161,10 +162,14 @@ pub async fn serve_http(
     cancel: CancellationToken,
     extra_allowed_hosts: Vec<String>,
 ) -> Result<()> {
+    // Validate before binding: a config error should not take the port, and it
+    // must not be announced as a listening server it is about to contradict.
+    let server = BrontesServer::new(cli, cfg)?;
     let acceptor = bind_default_acceptor(addr).await?;
+    // Format matches ophis `config.go:124` (`%q` on the address).
+    tracing::info!("MCP server listening on address \"{addr}\"");
     serve_http_with(
-        cli,
-        cfg,
+        server,
         acceptor,
         cancel,
         extra_allowed_hosts,
@@ -183,17 +188,20 @@ pub async fn serve_http(
 /// `connections did not drain within ...`) can be exercised without
 /// waiting five real seconds or breaking a live TCP listener.
 ///
+/// Takes an already-built handler rather than a `(cli, cfg)` pair: the walk
+/// has to happen before the caller can honestly report a listening server, so
+/// the construction belongs upstream of the bind.
+///
 /// # Errors
 ///
-/// - [`crate::Error::Config`] when [`BrontesServer::new`] surfaces a
-///   schema/config error at startup.
+/// Transport-level failures only; configuration is already resolved by the
+/// time a [`BrontesServer`] exists.
 // `pub` (not `pub(crate)`) so the `__test_internal` re-export in
 // `lib.rs` can carry it out. Effective visibility is crate-internal
 // because the parent `server::http` module is `pub(crate)` and the
 // [`Acceptor`] trait that bounds `A` is `pub`.
 pub async fn serve_http_with<A>(
-    cli: Command,
-    cfg: Config,
+    server: BrontesServer,
     acceptor: A,
     cancel: CancellationToken,
     extra_allowed_hosts: Vec<String>,
@@ -202,11 +210,6 @@ pub async fn serve_http_with<A>(
 where
     A: Acceptor,
 {
-    // Walk once, here: any schema/config bug surfaces at startup rather than
-    // on the first inbound request, and the handler the factory below hands
-    // out is a clone of this one rather than a fresh walk.
-    let server = BrontesServer::new(cli, cfg)?;
-
     let session_manager = Arc::new(LocalSessionManager::default());
     // `StreamableHttpServerConfig` is `#[non_exhaustive]`; use the
     // default + builder rather than a struct literal so additive field

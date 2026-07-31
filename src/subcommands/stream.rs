@@ -24,6 +24,10 @@ use crate::config::Config;
 /// ophis-parity; the editor-config writer derives the JSON snippet for
 /// MCP clients from this surface.
 pub fn build() -> Command {
+    super::common::with_selection_flags(build_without_selection())
+}
+
+fn build_without_selection() -> Command {
     Command::new("stream")
         .about("Start the MCP server over streamable HTTP")
         .long_about(
@@ -109,7 +113,7 @@ pub async fn run_with_cancel(
     cfg: Option<Config>,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let cfg = cfg.unwrap_or_default();
+    let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
     let log_level = parse_log_level(matches);
     init_tracing(log_level.or(cfg.log_level));
 
@@ -126,12 +130,6 @@ pub async fn run_with_cancel(
             "invalid --host/--port combination {host:?}:{port}: {e}"
         ))
     })?;
-
-    // Startup log line matches ophis `config.go:124`:
-    // `fmt.Sprintf("MCP server listening on address %q", addr)`. The
-    // `%q` verb yields a Go-quoted string; we reproduce that with a
-    // literal `"{addr}"` (no escaping needed for SocketAddr Display).
-    tracing::info!("MCP server listening on address \"{addr}\"");
 
     crate::server::http::serve_http(cli, cfg, addr, cancel, extra_allowed_hosts).await
 }

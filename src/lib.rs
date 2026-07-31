@@ -89,6 +89,7 @@ pub mod selectors;
 mod server;
 mod subcommands;
 mod tool;
+mod toolset;
 mod trace;
 mod walk;
 
@@ -107,6 +108,7 @@ pub use selector::{
     MiddlewareResult, Selector,
 };
 pub use tool::{ToolInput, ToolOutput};
+pub use toolset::{Group, ToolFilter};
 pub use trace::TraceContext;
 
 /// The `rmcp` types that appear on brontes' own public surface.
@@ -281,6 +283,26 @@ pub mod __test_internal {
     #[must_use]
     pub fn stream_subcommand() -> clap::Command {
         crate::subcommands::stream::build_for_test()
+    }
+
+    /// Build the `mcp tools` subcommand, so the test crate can compare the
+    /// three leaves' flag surfaces against each other.
+    #[must_use]
+    pub fn tools_subcommand() -> clap::Command {
+        crate::subcommands::tools::build()
+    }
+
+    /// Fold the tool-selection flags in `matches` onto `cfg`, as each `mcp`
+    /// leaf does at startup.
+    #[must_use]
+    pub fn apply_selection_flags(cfg: crate::Config, matches: &clap::ArgMatches) -> crate::Config {
+        crate::subcommands::common::apply_selection_flags(cfg, matches)
+    }
+
+    /// Append the tool-selection flags in `matches` to a generated
+    /// `mcp start` argv, as `mcp <editor> enable` does.
+    pub fn push_selection_flags(args: &mut Vec<String>, matches: &clap::ArgMatches) {
+        crate::subcommands::editor::push_selection_flags(args, matches);
     }
 
     /// Drive `crate::subcommands::stream::run_with_cancel` with a

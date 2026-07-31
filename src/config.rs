@@ -30,6 +30,7 @@ use tracing::Level;
 use crate::annotations::ToolAnnotations;
 use crate::schema::SchemaType;
 use crate::selector::Selector;
+use crate::toolset::{Group, ToolFilter};
 
 /// Which clap field provides the primary text for an MCP tool description.
 ///
@@ -275,6 +276,21 @@ pub struct Config {
     ///
     /// `None` uses [`Config::DEFAULT_TASK_POLL_INTERVAL`].
     pub task_poll_interval: Option<Duration>,
+
+    /// Named bundles of commands an end user can ask for by name, keyed by
+    /// group name.
+    ///
+    /// Ordered so `mcp tools --groups` lists them the same way on every run.
+    /// Set through [`Config::group`] / [`Config::group_description`].
+    pub groups: BTreeMap<String, Group>,
+
+    /// Which of the walked commands this server exposes.
+    ///
+    /// Empty by default (every command becomes a tool). The `--group` /
+    /// `--command` / `--tool` flags on `mcp start`, `mcp stream`, and
+    /// `mcp tools` merge onto whatever is set here, so a developer default and
+    /// an end-user choice compose.
+    pub tool_filter: ToolFilter,
 }
 
 impl Config {
@@ -903,6 +919,161 @@ impl Config {
     #[must_use]
     pub const fn task_poll_interval(mut self, interval: Duration) -> Self {
         self.task_poll_interval = Some(interval);
+        self
+    }
+
+    /// Name a bundle of commands an end user can select with
+    /// `--group <NAME>`.
+    ///
+    /// Each entry covers its own subtree, so naming `"anodizer release"` also
+    /// takes `"anodizer release notes"` — the group tracks the command tree
+    /// rather than drifting from it as subcommands are added.  Calling this
+    /// twice with the same name appends to the existing group.
+    ///
+    /// Paths that match no walked command are rejected by
+    /// [`crate::generate_tools`], so a renamed subcommand breaks the build
+    /// instead of silently shrinking the group.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().group("release", ["anodizer release", "anodizer publish"]);
+    /// assert_eq!(cfg.groups["release"].commands.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn group<I, S>(mut self, name: impl Into<String>, commands: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.groups
+            .entry(name.into())
+            .or_default()
+            .commands
+            .extend(commands.into_iter().map(Into::into));
+        self
+    }
+
+    /// Attach a one-line summary to a group, shown by `mcp tools --groups`.
+    ///
+    /// Naming a group that has no members yet creates it, so the description
+    /// may be set before or after [`Config::group`].
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default()
+    ///     .group("release", ["anodizer release"])
+    ///     .group_description("release", "Cut, sign, and publish a release");
+    /// assert!(cfg.groups["release"].description.is_some());
+    /// ```
+    #[must_use]
+    pub fn group_description(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        self.groups.entry(name.into()).or_default().description = Some(description.into());
+        self
+    }
+
+    /// Expose only the named group, as `--group <NAME>` does.
+    ///
+    /// Combines with the other `expose_*` methods (union) and loses to every
+    /// `hide_*` method.  Pin one here to ship a CLI whose MCP server is
+    /// trimmed by default; end users widen or narrow it from the launch flags.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default()
+    ///     .group("release", ["anodizer release"])
+    ///     .expose_group("release");
+    /// assert!(cfg.tool_filter.groups.contains("release"));
+    /// ```
+    #[must_use]
+    pub fn expose_group(mut self, name: impl Into<String>) -> Self {
+        self.tool_filter.groups.insert(name.into());
+        self
+    }
+
+    /// Expose a command and everything under it, as `--command <PATH>` does.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().expose_command("anodizer release");
+    /// assert!(cfg.tool_filter.commands.contains("anodizer release"));
+    /// ```
+    #[must_use]
+    pub fn expose_command(mut self, cmd_path: impl Into<String>) -> Self {
+        self.tool_filter.commands.insert(cmd_path.into());
+        self
+    }
+
+    /// Expose one MCP tool by its generated name, as `--tool <NAME>` does.
+    ///
+    /// Unlike [`Config::expose_command`] this does not take the subtree — it
+    /// is the surgical form, for when a command's children should stay hidden.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().expose_tool("anodizer_release");
+    /// assert!(cfg.tool_filter.tools.contains("anodizer_release"));
+    /// ```
+    #[must_use]
+    pub fn expose_tool(mut self, tool_name: impl Into<String>) -> Self {
+        self.tool_filter.tools.insert(tool_name.into());
+        self
+    }
+
+    /// Remove a group from the tool list, as `--hide-group <NAME>` does.
+    ///
+    /// Hiding beats exposing, so this holds even against an `expose_*` entry
+    /// naming the same command.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default()
+    ///     .group("dangerous", ["anodizer secrets"])
+    ///     .hide_group("dangerous");
+    /// assert!(cfg.tool_filter.hidden_groups.contains("dangerous"));
+    /// ```
+    #[must_use]
+    pub fn hide_group(mut self, name: impl Into<String>) -> Self {
+        self.tool_filter.hidden_groups.insert(name.into());
+        self
+    }
+
+    /// Remove a command and everything under it, as `--hide-command <PATH>`
+    /// does.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().hide_command("anodizer secrets");
+    /// assert!(cfg.tool_filter.hidden_commands.contains("anodizer secrets"));
+    /// ```
+    #[must_use]
+    pub fn hide_command(mut self, cmd_path: impl Into<String>) -> Self {
+        self.tool_filter.hidden_commands.insert(cmd_path.into());
+        self
+    }
+
+    /// Remove one MCP tool by its generated name, as `--hide-tool <NAME>`
+    /// does.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().hide_tool("anodizer_secrets_get");
+    /// assert!(cfg.tool_filter.hidden_tools.contains("anodizer_secrets_get"));
+    /// ```
+    #[must_use]
+    pub fn hide_tool(mut self, tool_name: impl Into<String>) -> Self {
+        self.tool_filter.hidden_tools.insert(tool_name.into());
         self
     }
 }

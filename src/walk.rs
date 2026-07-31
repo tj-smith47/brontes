@@ -25,14 +25,20 @@ pub struct ResolvedCmd<'a> {
 /// Walk the clap tree depth-first, producing a flat `Vec` of resolved
 /// entries. The root command is included as the first entry.
 ///
-/// Subcommands are visited in reverse registration order (the iterative DFS
-/// pushes them onto a stack and pops). Order is deterministic across runs.
+/// Subcommands are visited in registration order, so the tool list reads the
+/// way the CLI's own `--help` does: an author who put `release` before
+/// `secrets` meant something by it, and that ordering is the only ranking
+/// signal a tool list carries. The order is fixed by the clap tree and so is
+/// stable across runs, which is what `2026-07-28` asks for so clients and
+/// prompt caches can cache a listing.
 pub fn walk(root: &Command) -> Vec<ResolvedCmd<'_>> {
     let mut out = Vec::new();
     let mut stack: Vec<(&Command, Vec<&str>)> = vec![(root, vec![root.get_name()])];
     while let Some((cmd, parts)) = stack.pop() {
         let path = parts.join(" ");
-        for sub in cmd.get_subcommands() {
+        // Reversed on the way in so they come back off the stack in the order
+        // the author declared them.
+        for sub in cmd.get_subcommands().collect::<Vec<_>>().into_iter().rev() {
             let mut p = parts.clone();
             p.push(sub.get_name());
             stack.push((sub, p));
@@ -134,6 +140,30 @@ mod tests {
         assert!(paths.contains(&"root child-a"));
         assert!(paths.contains(&"root child-a grandchild"));
         assert!(paths.contains(&"root child-b"));
+    }
+
+    #[test]
+    fn walk_visits_subcommands_in_declaration_order() {
+        // The tool list carries no ranking beyond its order, so the author's
+        // ordering is the only signal a client gets. Depth-first: each
+        // command's own subtree comes before the next sibling.
+        let root = Command::new("root")
+            .subcommand(Command::new("first").subcommand(Command::new("nested")))
+            .subcommand(Command::new("second"))
+            .subcommand(Command::new("third"));
+
+        let entries = walk(&root);
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "root",
+                "root first",
+                "root first nested",
+                "root second",
+                "root third",
+            ]
+        );
     }
 
     #[test]

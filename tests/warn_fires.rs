@@ -502,7 +502,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
-use brontes::__test_internal::{Acceptor, TokioIo, serve_http_with};
+use brontes::__test_internal::{Acceptor, BrontesServer, TokioIo, serve_http_with};
 
 /// Faulty acceptor for the `accept failed; continuing` warn-fire path.
 ///
@@ -551,8 +551,7 @@ fn http_accept_failure_emits_continuing_warn() {
 
             let server = tokio::spawn(async move {
                 serve_http_with(
-                    cli,
-                    Config::default(),
+                    BrontesServer::new(cli, Config::default()).expect("server construction"),
                     acceptor,
                     inner_cancel,
                     vec![],
@@ -620,8 +619,7 @@ fn http_grace_window_exceeded_emits_warn() {
 
             let server = tokio::spawn(async move {
                 serve_http_with(
-                    cli,
-                    Config::default(),
+                    BrontesServer::new(cli, Config::default()).expect("server construction"),
                     acceptor,
                     server_cancel,
                     vec![],

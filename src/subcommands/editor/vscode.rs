@@ -59,7 +59,7 @@ pub fn build() -> Command {
         .long_about("Manage MCP server configuration for Visual Studio Code")
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .subcommand(
+        .subcommand(crate::subcommands::common::with_selection_flags(
             Command::new("enable")
                 .about("Add server to VSCode config")
                 .long_about("Add this application as an MCP server in VSCode")
@@ -68,7 +68,7 @@ pub fn build() -> Command {
                 .arg(arg_env())
                 .arg(arg_log_level())
                 .arg(arg_workspace()),
-        )
+        ))
         .subcommand(
             Command::new("disable")
                 .about("Remove server from VSCode config")
@@ -136,6 +136,7 @@ fn run_enable(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
         args.push("--log-level".to_string());
         args.push(level.clone());
     }
+    super::push_selection_flags(&mut args, matches);
 
     let server = VSCodeServer {
         kind: "stdio".to_string(),

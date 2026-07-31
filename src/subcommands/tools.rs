@@ -21,15 +21,23 @@ const OUTPUT_FILE: &str = "mcp-tools.json";
 
 /// Build the `mcp tools` clap subcommand.
 pub fn build() -> Command {
-    Command::new("tools")
-        .about("Export tools as JSON")
-        .long_about("Export available MCP tools to mcp-tools.json for inspection")
-        .arg(
-            Arg::new("log-level")
-                .long("log-level")
-                .value_name("LEVEL")
-                .help("Log level (trace, debug, info, warn, error)"),
-        )
+    super::common::with_selection_flags(
+        Command::new("tools")
+            .about("Export tools as JSON")
+            .long_about("Export available MCP tools to mcp-tools.json for inspection")
+            .arg(
+                Arg::new("log-level")
+                    .long("log-level")
+                    .value_name("LEVEL")
+                    .help("Log level (trace, debug, info, warn, error)"),
+            )
+            .arg(
+                Arg::new("groups")
+                    .long("groups")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("List the command groups this CLI defines, then exit"),
+            ),
+    )
 }
 
 /// Run `mcp tools` against the supplied CLI tree.
@@ -44,8 +52,12 @@ pub fn build() -> Command {
 ///   `generate_tools` for invalid configuration.
 /// - [`crate::Error::Io`] if the output file cannot be written.
 pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<()> {
-    let cfg = cfg.unwrap_or_default();
+    let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
     init_tracing(parse_log_level(matches).or(cfg.log_level));
+
+    if matches.get_flag("groups") {
+        return list_groups(cli, &cfg);
+    }
 
     let tools = crate::generate_tools(cli, &cfg)?;
 
@@ -59,6 +71,59 @@ pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<(
         "Successfully exported {} tools to {OUTPUT_FILE}",
         tools.len()
     );
+    Ok(())
+}
+
+/// Print the groups this CLI defines, with how many tools each one carries.
+///
+/// The count is resolved against the walked tree rather than against the
+/// group's member list, so a group naming a parent command reports the number
+/// of tools an end user would actually get from `--group <NAME>`.
+///
+/// # Errors
+///
+/// Same conditions as [`crate::generate_tools`] — the walk still runs, because
+/// a group whose members no longer exist should be reported as the
+/// configuration error it is rather than listed with a count of zero.
+fn list_groups(cli: &Command, cfg: &Config) -> Result<()> {
+    // Count against the untrimmed list: `--groups` describes the CLI, not the
+    // subset the same invocation's selection flags would serve.
+    let mut unfiltered = cfg.clone();
+    unfiltered.tool_filter = crate::ToolFilter::default();
+    let tools = crate::command::generate_tools_with_middleware(cli, &unfiltered)?;
+
+    if cfg.groups.is_empty() {
+        println!("This CLI defines no command groups.");
+        return Ok(());
+    }
+
+    let rows: Vec<(&String, String, &str)> = cfg
+        .groups
+        .iter()
+        .map(|(name, group)| {
+            let count = tools
+                .iter()
+                .filter(|t| {
+                    group
+                        .commands
+                        .iter()
+                        .any(|m| crate::toolset::covers(m, &t.command_path))
+                })
+                .count();
+            let plural = if count == 1 { "tool" } else { "tools" };
+            (
+                name,
+                format!("{count} {plural}"),
+                group.description.as_deref().unwrap_or(""),
+            )
+        })
+        .collect();
+
+    let name_width = rows.iter().map(|(n, ..)| n.len()).max().unwrap_or(0);
+    let count_width = rows.iter().map(|(_, c, _)| c.len()).max().unwrap_or(0);
+    for (name, count, about) in rows {
+        println!("{name:<name_width$}  {count:<count_width$}  {about}");
+    }
     Ok(())
 }
 

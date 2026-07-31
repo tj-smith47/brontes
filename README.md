@@ -483,7 +483,17 @@ Two properties are worth knowing before you flip it on:
 |---|---|
 | A client that never declared the extension | Gets the blocking result, whatever the config says. Detaching is never a compatibility break |
 | `Config::task_ttl` unset (the default) | No time limit — the command runs until it exits or is cancelled. A finite TTL **aborts** a command still running when it elapses, and is also what eventually sweeps finished task records; set one on a long-lived `mcp stream` server |
-| Under `mcp stream` | Tasks are held per server process, not per connection — the revision is stateless and has no session to scope them to. Anyone who can reach the port and holds a task id can poll or cancel that task, which is why `mcp stream` binds loopback until you widen it with `--allow-host` |
+
+The handle is the security boundary. `2026-07-28` removed protocol sessions, and
+the tasks extension replaces them with exactly this: a server-minted handle that
+acts as a bearer token for the state behind it. Three properties make that safe,
+each covered by a test in [`tests/tasks.rs`](tests/tasks.rs):
+
+| | |
+|---|---|
+| Handles are unguessable | 122 bits from the OS CSPRNG (`getrandom`) per handle. `handles_are_unguessable_and_never_repeat` rejects a sequence or a counter |
+| A handle the server does not hold is never served | `tasks/get`, `tasks/update`, and `tasks/cancel` all answer `-32602` for an unknown id, identically for a well-formed one and a malformed one — so there is no oracle for probing which handles exist, and no `tasks/list` to enumerate them |
+| The three task methods are closed to clients that never negotiated the extension | `-32021 Missing Required Client Capability`, checked before the store is touched |
 
 ## API reference
 

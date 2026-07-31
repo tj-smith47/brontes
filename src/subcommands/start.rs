@@ -11,15 +11,17 @@ use crate::config::Config;
 
 /// Build the `mcp start` clap subcommand.
 pub fn build() -> Command {
-    Command::new("start")
-        .about("Start the MCP server")
-        .long_about("Start stdio server to expose CLI commands to AI assistants")
-        .arg(
-            Arg::new("log-level")
-                .long("log-level")
-                .value_name("LEVEL")
-                .help("Log level (trace, debug, info, warn, error)"),
-        )
+    super::common::with_selection_flags(
+        Command::new("start")
+            .about("Start the MCP server")
+            .long_about("Start stdio server to expose CLI commands to AI assistants")
+            .arg(
+                Arg::new("log-level")
+                    .long("log-level")
+                    .value_name("LEVEL")
+                    .help("Log level (trace, debug, info, warn, error)"),
+            ),
+    )
 }
 
 /// Run `mcp start` against the supplied CLI tree.
@@ -29,7 +31,8 @@ pub fn build() -> Command {
 /// configuration.
 pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
     let log_level = parse_log_level(matches);
-    crate::server::stdio::serve_stdio(cli, cfg, log_level).await
+    let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
+    crate::server::stdio::serve_stdio(cli, Some(cfg), log_level).await
 }
 
 /// Test-only proxy for [`parse_log_level`]. Exposed via

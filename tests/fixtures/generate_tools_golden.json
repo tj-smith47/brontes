@@ -1,13 +1,13 @@
 [
   {
-    "name": "golden-cli_act_baz",
-    "description": "Run the baz action",
+    "name": "golden-cli_act_foo",
+    "description": "Run the foo action\n\nExamples:\ngolden-cli act foo /tmp --count 3",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "args": {
           "default": [],
-          "description": "Positional command line arguments\nUsage pattern: [target]",
+          "description": "Positional command line arguments\nUsage pattern: <path>",
           "items": {
             "type": "string"
           },
@@ -16,19 +16,14 @@
         "flags": {
           "additionalProperties": false,
           "properties": {
-            "format": {
-              "description": "Output format",
-              "enum": [
-                "json",
-                "yaml",
-                "toml"
-              ],
-              "type": "string"
-            },
-            "v": {
-              "default": 0,
-              "description": "Verbosity (repeat for more)",
+            "count": {
+              "description": "How many times to run",
               "type": "integer"
+            },
+            "debug": {
+              "default": false,
+              "description": "Enable debug output",
+              "type": "boolean"
             },
             "verbose": {
               "default": false,
@@ -140,14 +135,14 @@
     }
   },
   {
-    "name": "golden-cli_act_foo",
-    "description": "Run the foo action\n\nExamples:\ngolden-cli act foo /tmp --count 3",
+    "name": "golden-cli_act_baz",
+    "description": "Run the baz action",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "args": {
           "default": [],
-          "description": "Positional command line arguments\nUsage pattern: <path>",
+          "description": "Positional command line arguments\nUsage pattern: [target]",
           "items": {
             "type": "string"
           },
@@ -156,14 +151,19 @@
         "flags": {
           "additionalProperties": false,
           "properties": {
-            "count": {
-              "description": "How many times to run",
-              "type": "integer"
+            "format": {
+              "description": "Output format",
+              "enum": [
+                "json",
+                "yaml",
+                "toml"
+              ],
+              "type": "string"
             },
-            "debug": {
-              "default": false,
-              "description": "Enable debug output",
-              "type": "boolean"
+            "v": {
+              "default": 0,
+              "description": "Verbosity (repeat for more)",
+              "type": "integer"
             },
             "verbose": {
               "default": false,

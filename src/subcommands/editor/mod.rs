@@ -82,6 +82,34 @@ pub fn arg_log_level() -> Arg {
         .help("Log level for the spawned MCP server (trace, debug, info, warn, error)")
 }
 
+/// Append the tool-selection flags from `matches` to a generated
+/// `mcp start` argv.
+///
+/// An editor's MCP config is a launch command, and trimming is a launch-time
+/// decision, so `--group release` on `enable` has to survive into the argv the
+/// editor spawns — otherwise the tool list the user picked lasts exactly as
+/// long as the install command that asked for it. Flags are emitted in the
+/// same order on every run so re-running `enable` produces a byte-identical
+/// config file.
+pub fn push_selection_flags(args: &mut Vec<String>, matches: &clap::ArgMatches) {
+    for long in [
+        "group",
+        "command",
+        "tool",
+        "hide-group",
+        "hide-command",
+        "hide-tool",
+    ] {
+        let Some(values) = matches.get_many::<String>(long) else {
+            continue;
+        };
+        for value in values {
+            args.push(format!("--{long}"));
+            args.push(value.clone());
+        }
+    }
+}
+
 /// Merge `default_env` and the parsed `--env` flags into a single map.
 ///
 /// Returns `None` when the merged map is empty so callers can write

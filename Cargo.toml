@@ -105,6 +105,10 @@ rmcp = { version = "3.0", features = [
 # bound port. `reqwest` is rmcp's chosen smoke-test client and is already
 # present in its dev-dep graph.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# A task handle is a bearer token, so the handle-security tests assert its
+# shape and entropy directly. Same crate rmcp mints them with, so the
+# assertions read against the real generator rather than a re-implementation.
+uuid = { version = "1", features = ["v4"] }
 
 [lints.rust]
 unsafe_code = "forbid"

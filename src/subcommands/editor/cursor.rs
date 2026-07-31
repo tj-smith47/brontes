@@ -47,7 +47,7 @@ pub fn build() -> Command {
         .long_about("Manage MCP server configuration for Cursor")
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .subcommand(
+        .subcommand(crate::subcommands::common::with_selection_flags(
             Command::new("enable")
                 .about("Add this CLI as an MCP server in Cursor")
                 .arg(arg_config_path())
@@ -55,7 +55,7 @@ pub fn build() -> Command {
                 .arg(arg_env())
                 .arg(arg_log_level())
                 .arg(arg_workspace()),
-        )
+        ))
         .subcommand(
             Command::new("disable")
                 .about("Remove this CLI from Cursor's MCP servers")
@@ -121,6 +121,7 @@ fn run_enable(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
         args.push("--log-level".to_string());
         args.push(level.clone());
     }
+    super::push_selection_flags(&mut args, matches);
 
     let server = CursorServer {
         kind: "stdio".to_string(),
