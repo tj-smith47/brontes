@@ -42,8 +42,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ToolInput {
     /// Flags provided to the CLI command, keyed by long flag name (e.g., `log-level`).
+    // Optional on the wire: a command invoked with neither flags nor arguments
+    // is the common case, and making the caller spell out `{"flags": {},
+    // "args": []}` to express "nothing" spends the model's tokens on two keys
+    // that carry no information.
+    #[serde(default)]
     pub flags: serde_json::Map<String, serde_json::Value>,
     /// Positional arguments to the CLI command, in order.
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
@@ -130,6 +136,25 @@ mod tests {
             obj["args"].as_array().expect("args is array").is_empty(),
             "args must be an empty array"
         );
+    }
+
+    #[test]
+    fn either_field_may_be_omitted_by_the_caller() {
+        // The schema no longer lists them as required, and deserialization has
+        // to agree: advertising a field as optional and then rejecting the
+        // call that omits it is the worst of both.
+        let flags_only: ToolInput =
+            from_value(json!({"flags": {"verbose": true}})).expect("flags alone must deserialize");
+        assert!(flags_only.args.is_empty());
+        assert_eq!(flags_only.flags.get("verbose"), Some(&json!(true)));
+
+        let args_only: ToolInput =
+            from_value(json!({"args": ["target"]})).expect("args alone must deserialize");
+        assert!(args_only.flags.is_empty());
+        assert_eq!(args_only.args, vec!["target".to_string()]);
+
+        let neither: ToolInput = from_value(json!({})).expect("an empty object must deserialize");
+        assert!(neither.flags.is_empty() && neither.args.is_empty());
     }
 
     #[test]

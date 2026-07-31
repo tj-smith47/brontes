@@ -173,8 +173,9 @@ async fn start_heartbeat(
         "flags": {
             "file": file.display().to_string(),
             "ticks": ticks.to_string(),
-        },
-        "args": [],
+        }
+        // `args` is deliberately omitted: the schema does not require it, and a
+        // call that leaves it out has to work over the real transport.
     });
     let params = CallToolRequestParams::new(format!("cancel-cli_{HEARTBEAT_SUBCOMMAND}"))
         .with_arguments(serde_json::from_value(arguments).expect("arguments object"));

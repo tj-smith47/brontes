@@ -6,6 +6,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "args": {
+          "default": [],
           "description": "Positional command line arguments\nUsage pattern: [target]",
           "items": {
             "type": "string"
@@ -38,10 +39,6 @@
           "type": "object"
         }
       },
-      "required": [
-        "flags",
-        "args"
-      ],
       "type": "object"
     },
     "outputSchema": {
@@ -76,6 +73,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "args": {
+          "default": [],
           "description": "Positional command line arguments",
           "items": {
             "type": "string"
@@ -114,10 +112,6 @@
           "type": "object"
         }
       },
-      "required": [
-        "flags",
-        "args"
-      ],
       "type": "object"
     },
     "outputSchema": {
@@ -152,6 +146,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "args": {
+          "default": [],
           "description": "Positional command line arguments\nUsage pattern: <path>",
           "items": {
             "type": "string"
@@ -179,10 +174,6 @@
           "type": "object"
         }
       },
-      "required": [
-        "flags",
-        "args"
-      ],
       "type": "object"
     },
     "outputSchema": {
