@@ -11,6 +11,9 @@
 //!   `2026-07-28` still handshake and still carry `Mcp-Session-Id`.
 //! - The stateless `2026-07-28` path: a bare `tools/list` with SEP-2243
 //!   standard headers and no handshake, no session id.
+//! - A promoted flag's `Mcp-Param-*` header validated against the body, which
+//!   is the only place brontes' `x-mcp-header` annotation is observable: the
+//!   annotation is worth emitting exactly because a mismatch is rejected.
 //! - Cancellation: dropping the token cancels the accept loop and the
 //!   serve future resolves within the 5-second `SHUTDOWN_GRACE`.
 //!
@@ -31,7 +34,13 @@ use brontes::__test_internal::serve_http;
 fn fixture_cli() -> Command {
     Command::new("brontes-http-smoke")
         .version("0.0.1")
-        .subcommand(Command::new("greet").about("Say hi"))
+        .subcommand(
+            Command::new("greet").about("Say hi").arg(
+                clap::Arg::new("region")
+                    .long("region")
+                    .help("Target region"),
+            ),
+        )
         .subcommand(Command::new("status").about("Show status"))
 }
 
@@ -50,20 +59,20 @@ async fn pick_free_port() -> SocketAddr {
 /// `serve_http` that failed at bind time. Polling a successful TCP connect is
 /// more reliable than a fixed sleep.
 async fn spawn_server() -> (SocketAddr, CancellationToken, tokio::task::JoinHandle<()>) {
+    spawn_server_with(brontes::Config::default()).await
+}
+
+async fn spawn_server_with(
+    cfg: brontes::Config,
+) -> (SocketAddr, CancellationToken, tokio::task::JoinHandle<()>) {
     let addr = pick_free_port().await;
     let cancel = CancellationToken::new();
 
     let server_cancel = cancel.clone();
     let server_task = tokio::spawn(async move {
-        serve_http(
-            fixture_cli(),
-            brontes::Config::default(),
-            addr,
-            server_cancel,
-            vec![],
-        )
-        .await
-        .expect("serve_http");
+        serve_http(fixture_cli(), cfg, addr, server_cancel, vec![])
+            .await
+            .expect("serve_http");
     });
 
     for _ in 0..50 {
@@ -292,6 +301,189 @@ async fn http_2026_07_28_rejects_a_mismatched_standard_header() {
     assert_eq!(
         json["error"]["code"], -32020,
         "expected HeaderMismatch for a Mcp-Method that disagrees with the body: {json}"
+    );
+
+    cancel.cancel();
+    let joined = tokio::time::timeout(Duration::from_secs(6), server_task).await;
+    assert!(
+        joined.is_ok(),
+        "server did not exit within 6s of cancellation"
+    );
+}
+
+/// A `tools/call` for the promoted-flag fixture, with `region` at the top
+/// level where `Config::promote_flag` puts it.
+fn promoted_call_body(region: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "brontes-http-smoke_greet",
+            "arguments": { "region": region },
+        },
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn http_2026_07_28_validates_a_promoted_flags_param_header() {
+    // Emitting `x-mcp-header` only pays off if the receiving server actually
+    // checks the copy against the body — otherwise a proxy that routed on the
+    // header could forward a body that says something else entirely, and the
+    // command would run with the value nobody routed on.
+    let cfg = brontes::Config::default().promote_flag("brontes-http-smoke greet", "region");
+    let (addr, cancel, server_task) = spawn_server_with(cfg).await;
+
+    let url = format!("http://{addr}/");
+    let client = reqwest::Client::new();
+
+    let agreeing = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "tools/call")
+        .header("Mcp-Name", "brontes-http-smoke_greet")
+        .header("Mcp-Param-region", "us-east-1")
+        .body(promoted_call_body("us-east-1"))
+        .send()
+        .await
+        .expect("agreeing header send");
+
+    // A served call answers on the SSE stream; a refused one answers with a
+    // plain JSON error body. The command itself is this test binary, so what
+    // it exits with is irrelevant — reaching a result at all is the assertion.
+    assert_eq!(
+        agreeing.status(),
+        200,
+        "a header agreeing with the body must be served"
+    );
+    let body_text = agreeing.text().await.expect("read agreeing body");
+    let json = parse_sse_data(&body_text);
+    assert!(
+        json["error"].is_null(),
+        "a header agreeing with the body must not be rejected: {json}"
+    );
+
+    let disagreeing = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "tools/call")
+        .header("Mcp-Name", "brontes-http-smoke_greet")
+        .header("Mcp-Param-region", "eu-west-1")
+        .body(promoted_call_body("us-east-1"))
+        .send()
+        .await
+        .expect("disagreeing header send");
+
+    let json: serde_json::Value = disagreeing.json().await.expect("error body is JSON");
+    assert_eq!(
+        json["error"]["code"], -32020,
+        "a promoted flag whose header and body disagree must be a HeaderMismatch; \
+         without the x-mcp-header annotation reaching the schema there is nothing \
+         to compare and this request would be served: {json}"
+    );
+
+    cancel.cancel();
+    let joined = tokio::time::timeout(Duration::from_secs(6), server_task).await;
+    assert!(
+        joined.is_ok(),
+        "server did not exit within 6s of cancellation"
+    );
+}
+
+/// Stateless `_meta` declaring the tasks extension, which is how a
+/// `2026-07-28` client says it can accept a task handle.
+fn tasks_client_meta() -> serde_json::Value {
+    serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+            "extensions": { "io.modelcontextprotocol/tasks": {} },
+        },
+    })
+}
+
+#[tokio::test]
+async fn http_a_task_survives_the_request_that_created_it() {
+    // The stateless revision has no session, so every request may be served by
+    // a freshly built handler. A task stored on the handler that created it
+    // would then be unreachable from the `tasks/get` that follows — tasks
+    // would work over stdio and be silently useless over HTTP, which is the
+    // transport where a long-running command needs them most.
+    let cfg = brontes::Config::default()
+        .task_mode_for("brontes-http-smoke status", brontes::TaskMode::Detached);
+    let (addr, cancel, server_task) = spawn_server_with(cfg).await;
+
+    let url = format!("http://{addr}/");
+    let client = reqwest::Client::new();
+
+    let call_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "brontes-http-smoke_status",
+            "arguments": {},
+            "_meta": tasks_client_meta(),
+        },
+    })
+    .to_string();
+
+    let created = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "tools/call")
+        .header("Mcp-Name", "brontes-http-smoke_status")
+        .body(call_body)
+        .send()
+        .await
+        .expect("detached tools/call send");
+
+    let json = parse_sse_data(&created.text().await.expect("read create body"));
+    assert_eq!(
+        json["result"]["resultType"], "task",
+        "a detached command must answer a tasks-capable client with a handle: {json}"
+    );
+    let task_id = json["result"]["taskId"]
+        .as_str()
+        .expect("a task handle carries a taskId")
+        .to_owned();
+
+    let get_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tasks/get",
+        "params": { "taskId": task_id, "_meta": tasks_client_meta() },
+    })
+    .to_string();
+
+    let fetched = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "tasks/get")
+        // SEP-2243 sources `Mcp-Name` from `params.taskId` for the task methods.
+        .header("Mcp-Name", task_id.clone())
+        .body(get_body)
+        .send()
+        .await
+        .expect("tasks/get send");
+
+    let json = parse_sse_data(&fetched.text().await.expect("read get body"));
+    assert!(
+        json["error"].is_null(),
+        "the task created by the previous request must still be reachable: {json}"
+    );
+    assert_eq!(
+        json["result"]["taskId"],
+        task_id.as_str(),
+        "tasks/get must answer for the task that was created: {json}"
     );
 
     cancel.cancel();

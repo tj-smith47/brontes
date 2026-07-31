@@ -483,6 +483,7 @@ Two properties are worth knowing before you flip it on:
 |---|---|
 | A client that never declared the extension | Gets the blocking result, whatever the config says. Detaching is never a compatibility break |
 | `Config::task_ttl` unset (the default) | No time limit — the command runs until it exits or is cancelled. A finite TTL **aborts** a command still running when it elapses, and is also what eventually sweeps finished task records; set one on a long-lived `mcp stream` server |
+| Under `mcp stream` | Tasks are held per server process, not per connection — the revision is stateless and has no session to scope them to. Anyone who can reach the port and holds a task id can poll or cancel that task, which is why `mcp stream` binds loopback until you widen it with `--allow-host` |
 
 ## API reference
 

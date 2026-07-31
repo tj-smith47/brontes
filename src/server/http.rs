@@ -202,12 +202,11 @@ pub async fn serve_http_with<A>(
 where
     A: Acceptor,
 {
-    // Eager pre-walk: any schema/config bug surfaces here, not on the
-    // first inbound HTTP request.
-    BrontesServer::new(cli.clone(), cfg.clone())?;
+    // Walk once, here: any schema/config bug surfaces at startup rather than
+    // on the first inbound request, and the handler the factory below hands
+    // out is a clone of this one rather than a fresh walk.
+    let server = BrontesServer::new(cli, cfg)?;
 
-    let factory_cli = cli;
-    let factory_cfg = cfg;
     let session_manager = Arc::new(LocalSessionManager::default());
     // `StreamableHttpServerConfig` is `#[non_exhaustive]`; use the
     // default + builder rather than a struct literal so additive field
@@ -224,14 +223,11 @@ where
 
     let service: StreamableHttpService<BrontesServer, LocalSessionManager> =
         StreamableHttpService::new(
-            move || {
-                BrontesServer::new(factory_cli.clone(), factory_cfg.clone()).map_err(|e| {
-                    // The factory must return std::io::Error; render the
-                    // brontes Error via Display so the operator sees the
-                    // same message they would have seen at startup.
-                    std::io::Error::other(format!("brontes server construction: {e}"))
-                })
-            },
+            // Every session shares one handler. Building a new one per session
+            // would give each its own task store, so a `tasks/get` would answer
+            // "unknown task" for the task the previous request just created —
+            // the stateless revision has no session to keep them together.
+            move || Ok(server.clone()),
             session_manager,
             config,
         );

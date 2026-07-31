@@ -53,20 +53,28 @@ use crate::trace::TraceContext;
 /// server construction, so the cache cannot go stale; a future
 /// hot-reload feature would need to invalidate it.
 ///
+/// Every field is shared rather than owned, so cloning a server is cheap and
+/// every clone answers from the same tool cache and the same task store. The
+/// streamable-HTTP transport takes a handler factory and calls it per session;
+/// handing out clones keeps a task created by one request reachable from the
+/// `tasks/get` that follows it, and keeps the clap walk a startup cost rather
+/// than a per-request one.
+///
 /// Marked `#[doc(hidden)]` because consumers are expected to drive the
 /// server through [`crate::handle`] / [`crate::run`]; the type is exposed
 /// solely so the integration test suite can drive it over an in-memory
 /// duplex transport.
 #[doc(hidden)]
+#[derive(Clone)]
 pub struct BrontesServer {
     /// The user's full clap tree, cloned and `build()`-ed at construction
     /// time so global args are propagated before walking.
-    cli: Command,
+    cli: Arc<Command>,
     /// User-facing configuration: selectors, annotations, default env, etc.
     cfg: Arc<Config>,
     /// Resolved tool list (descriptor + claimed middleware + clap path),
     /// computed once at construction. See type-level docs.
-    tools: Vec<ResolvedTool>,
+    tools: Arc<Vec<ResolvedTool>>,
     /// Store and executor for detached commands (SEP-2663). Present
     /// unconditionally — it costs an empty map when no command is detached,
     /// and the `tasks` capability, not this field, is what tells clients the
@@ -94,9 +102,9 @@ impl BrontesServer {
         cli.build();
         let tools = crate::command::generate_tools_with_middleware(&cli, &cfg)?;
         Ok(Self {
-            cli,
+            cli: Arc::new(cli),
             cfg: Arc::new(cfg),
-            tools,
+            tools: Arc::new(tools),
             tasks: TaskManager::new(),
         })
     }
@@ -514,9 +522,29 @@ async fn detached_rounds(
 
                 let mut answers = InputResponses::new();
                 for (key, request) in requests {
-                    // Propagates `TaskExit::Cancelled` when `tasks/cancel`
-                    // clears the pending inputs out from under us.
-                    let answer = task_ctx.request_input(key.clone(), request).await?;
+                    let answer = match task_ctx.request_input(key.clone(), request).await {
+                        Ok(answer) => answer,
+                        // `tasks/cancel` clears the pending inputs out from
+                        // under a task that is waiting on one.
+                        Err(TaskExit::Cancelled) => return Err(TaskExit::Cancelled),
+                        // Reusing a key the task already asked under — legal in
+                        // a blocking call, where each retry is a fresh request,
+                        // and rejected here because a task's keys are unique
+                        // over its lifetime. Report it the way every other
+                        // middleware mistake is reported rather than failing
+                        // the task at the protocol level.
+                        Err(TaskExit::Error(err)) => {
+                            return Ok(tool_error_result(
+                                &plan.tool_name,
+                                &plan.command_path,
+                                &crate::Error::Config(format!(
+                                    "middleware could not ask the client for input under \
+                                     key {key:?}: {}",
+                                    err.message
+                                )),
+                            ));
+                        }
+                    };
                     answers.insert(key, answer);
                 }
 

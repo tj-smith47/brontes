@@ -298,6 +298,21 @@ fn cancellable_middleware(seen: Arc<Mutex<RoundObservation>>) -> Middleware {
     })
 }
 
+/// Asks under the same key on every round — legal for a blocking call, where
+/// each retry is a fresh request, and not for a task, whose keys are unique
+/// over its lifetime.
+fn repeating_key_middleware(seen: Arc<Mutex<RoundObservation>>) -> Middleware {
+    Arc::new(move |_ctx: MiddlewareCtx, _next: BoxedNext| {
+        let seen = Arc::clone(&seen);
+        Box::pin(async move {
+            seen.lock().unwrap().rounds += 1;
+            Ok(MiddlewareOutcome::InputRequired(Box::new(
+                confirmation_request(),
+            )))
+        })
+    })
+}
+
 /// Asks for input on every round and never completes.
 fn insatiable_middleware(seen: Arc<Mutex<RoundObservation>>) -> Middleware {
     Arc::new(move |_ctx: MiddlewareCtx, _next: BoxedNext| {
@@ -532,6 +547,47 @@ async fn cancelling_a_task_reaches_the_running_command() {
         seen.lock().unwrap().cancelled,
         "tasks/cancel must reach the cancellation token the exec step waits on \
          — without that the subprocess outlives the task"
+    );
+
+    shutdown(client, cancel, server_task).await;
+}
+
+#[tokio::test]
+async fn reusing_an_input_key_is_a_tool_error_rather_than_a_failed_task() {
+    // The divergence worth catching: this middleware works in a blocking call
+    // and cannot in a task, so the report has to name what went wrong instead
+    // of settling the task with an internal SDK error.
+    let seen = Arc::new(Mutex::new(RoundObservation::default()));
+    let (client, cancel, server_task) = connect(
+        TasksClient,
+        detached_cfg(repeating_key_middleware(Arc::clone(&seen))),
+    )
+    .await;
+
+    let task_id = call_expecting_task(&client).await;
+    poll_until(&client, &task_id, TaskStatus::InputRequired).await;
+
+    let mut answers = InputResponses::new();
+    answers.insert(
+        CONFIRM_KEY.to_owned(),
+        serde_json::json!({ "action": "accept" }),
+    );
+    client
+        .peer()
+        .update_task(UpdateTaskParams::new(task_id.clone(), answers))
+        .await
+        .expect("tasks/update must be accepted");
+
+    let result = completed_result(poll_until(&client, &task_id, TaskStatus::Completed).await);
+    assert_eq!(
+        result.is_error,
+        Some(true),
+        "the second ask under the same key cannot be served, so the call failed"
+    );
+    let text = joined_text(&result);
+    assert!(
+        text.contains(CONFIRM_KEY),
+        "the report must name the key that could not be reused, got {text:?}"
     );
 
     shutdown(client, cancel, server_task).await;
