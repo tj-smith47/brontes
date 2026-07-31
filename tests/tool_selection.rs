@@ -15,7 +15,7 @@
 
 use clap::Command;
 
-use brontes::{Config, generate_tools};
+use brontes::{Config, Selector, generate_tools, selectors};
 
 /// A CLI with a nested subtree, two unrelated commands, and a command whose
 /// name is a prefix of another so segment-boundary matching is exercised.
@@ -29,6 +29,7 @@ fn cli() -> Command {
         )
         .subcommand(Command::new("releases").about("List past releases"))
         .subcommand(Command::new("publish").about("Publish artifacts"))
+        .subcommand(Command::new("status").about("Show status"))
         .subcommand(
             Command::new("secrets")
                 .about("Manage secrets")
@@ -144,7 +145,8 @@ fn hiding_alone_subtracts_from_the_full_tool_list() {
             "demo_release",
             "demo_release_notes",
             "demo_releases",
-            "demo_publish"
+            "demo_publish",
+            "demo_status"
         ],
         "with nothing selected, a hide must trim the full list rather than \
          start a new one"
@@ -173,8 +175,8 @@ fn a_developer_hide_survives_an_end_user_selection() {
     );
     let err = generate_tools(&cli(), &cfg).expect_err("nothing survives the hide");
     assert!(
-        err.to_string().contains("matches no commands"),
-        "the trim collapsing to nothing must be reported, got {err}"
+        err.to_string().contains("demo secrets"),
+        "the command caught between the two must be named, got {err}"
     );
 }
 
@@ -246,7 +248,7 @@ fn a_selection_that_matches_nothing_is_not_an_empty_server() {
         .expose_command("demo publish")
         .hide_command("demo publish"));
     assert!(
-        msg.contains("matches no commands"),
+        msg.contains("demo publish"),
         "an empty selection must be reported: {msg}"
     );
 }
@@ -342,4 +344,333 @@ fn an_editor_install_writes_the_selection_into_the_launch_argv() {
         "flags must round-trip in a stable order so re-running enable rewrites \
          the same config file"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selecting something the CLI will not serve
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A path can name a real command and still yield no tool: the command may be
+// deprecated, `hide`-ed in clap, a navigation node, or dropped by a selector.
+// Validating against the walked tree alone would let those selections pass and
+// then quietly vanish, which is the one outcome a client cannot diagnose.
+
+#[test]
+fn selecting_a_deprecated_command_is_reported_not_dropped() {
+    let cfg = Config::default()
+        .deprecate("demo publish")
+        .expose_command("demo publish")
+        .expose_command("demo status");
+    let msg = err(&cfg);
+    assert!(
+        msg.contains("demo publish") && msg.contains("deprecated"),
+        "asking for a deprecated command must say so rather than serving the \
+         rest of the selection: {msg}"
+    );
+}
+
+#[test]
+fn selecting_a_selector_excluded_command_is_reported() {
+    let cfg = Config::default()
+        .selector(Selector {
+            cmd: Some(selectors::allow_cmds(["demo status"])),
+            ..Default::default()
+        })
+        .expose_command("demo publish")
+        .expose_command("demo status");
+    let msg = err(&cfg);
+    assert!(
+        msg.contains("demo publish"),
+        "a selector already excluded it, so the selection cannot be honoured: {msg}"
+    );
+}
+
+#[test]
+fn a_group_whose_commands_are_all_filtered_out_is_reported() {
+    let cfg = grouped()
+        .deprecate("demo release")
+        .deprecate("demo release notes")
+        .deprecate("demo publish")
+        .expose_group("release");
+    let msg = err(&cfg);
+    assert!(
+        msg.contains("release") && msg.contains("exposes no tools"),
+        "an empty group must name itself: {msg}"
+    );
+}
+
+#[test]
+fn a_group_that_still_has_one_live_command_is_served() {
+    // The other side of the line: a group is not required to be intact, only
+    // non-empty. A developer who deprecates one member has not broken it.
+    let got = names(&grouped().deprecate("demo publish").expose_group("release"));
+    assert_eq!(got, vec!["demo_release", "demo_release_notes"]);
+}
+
+#[test]
+fn selecting_then_hiding_the_same_tool_is_reported() {
+    let cfg = Config::default()
+        .expose_tool("demo_release")
+        .expose_tool("demo_status")
+        .hide_tool("demo_release");
+    let msg = err(&cfg);
+    assert!(
+        msg.contains("demo_release"),
+        "contradicting flags must name the tool caught between them: {msg}"
+    );
+}
+
+#[test]
+fn listing_groups_refuses_to_look_like_a_filtered_listing() {
+    // `--groups` describes the CLI, not one server's subset, so combining it
+    // with a selection is a mistake rather than a filter.
+    let err = brontes::__test_internal::tools_subcommand()
+        .try_get_matches_from(["tools", "--groups", "--group", "release"])
+        .expect_err("--groups and --group must not combine");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Name collisions the tool list cannot express
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn two_commands_that_generate_one_tool_name_are_rejected() {
+    // A path separator becomes an underscore, so a flat `by_cell` and a nested
+    // `by cell` land on the same MCP name. Serving both would advertise one
+    // name twice, dispatch every call to whichever came first, and make
+    // `--tool demo_by_cell` silently mean two different things.
+    let colliding = Command::new("demo")
+        .subcommand(Command::new("by_cell").about("Flat"))
+        .subcommand(
+            Command::new("by")
+                .about("Nested")
+                .subcommand(Command::new("cell").about("Leaf")),
+        );
+
+    let msg = generate_tools(&colliding, &Config::default())
+        .expect_err("a duplicate tool name must be rejected")
+        .to_string();
+
+    assert!(
+        msg.contains("demo_by_cell")
+            && msg.contains("demo by_cell")
+            && msg.contains("demo by cell"),
+        "the error must name the tool and both commands that produce it: {msg}"
+    );
+}
+
+#[test]
+fn a_command_name_containing_a_space_is_rejected() {
+    // Command paths are joined with spaces everywhere brontes addresses a
+    // command, so a name with one in it cannot be named by `--command`, by a
+    // group member, or by a `Config` key.
+    let spaced = Command::new("demo").subcommand(Command::new("by cell").about("Two words"));
+
+    let msg = generate_tools(&spaced, &Config::default())
+        .expect_err("a command name with a space must be rejected")
+        .to_string();
+
+    assert!(
+        msg.contains("by cell") && msg.contains("contains a space"),
+        "the error must name the offending command: {msg}"
+    );
+}
+
+#[test]
+fn a_path_that_is_only_a_prefix_of_a_command_is_rejected() {
+    // `"my"` is not a command on a CLI rooted at `my-tool`. Matching selection
+    // paths by prefix would let it through and silently select the whole tree.
+    let cli = Command::new("my-tool").subcommand(Command::new("release").about("Cut a release"));
+
+    let msg = generate_tools(&cli, &Config::default().expose_command("my"))
+        .expect_err("a partial path must not select a subtree")
+        .to_string();
+
+    assert!(
+        msg.contains("no such command") && msg.contains("\"my\""),
+        "the error must name the path that does not exist: {msg}"
+    );
+}
+
+#[test]
+fn a_group_with_no_commands_is_rejected() {
+    // `group_description` creates the entry, so a description set against a
+    // typo'd name leaves behind a group that can never select anything.
+    let msg = err(&grouped().group_description("ghost", "Nothing here"));
+
+    assert!(
+        msg.contains("ghost") && msg.contains("no commands"),
+        "an empty group must be reported where it is defined: {msg}"
+    );
+}
+
+#[test]
+fn hiding_a_command_the_server_would_not_serve_anyway_is_allowed() {
+    // Hiding is held to a weaker standard than exposing on purpose: the
+    // outcome of `--hide-command` on an already-unserved command is exactly
+    // what was asked for, so failing would be pedantry rather than safety.
+    let cfg = grouped()
+        .deprecate("demo publish")
+        .hide_command("demo publish");
+
+    let got = names(&cfg);
+    assert!(
+        !got.iter().any(|n| n == "demo_publish"),
+        "the command must be absent either way: {got:?}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Installing into an editor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The demo CLI with the `mcp` subtree mounted, for dispatching through
+/// `brontes::handle` the way a consumer's `main` does.
+fn mounted() -> Command {
+    cli().subcommand(brontes::command(None))
+}
+
+/// Run one `mcp …` invocation against the demo CLI.
+fn dispatch(argv: &[&str], cfg: Option<&Config>) -> brontes::Result<()> {
+    let cli = mounted();
+    let matches = cli
+        .clone()
+        .try_get_matches_from(argv)
+        .expect("argv must parse");
+    let sub = matches
+        .subcommand_matches("mcp")
+        .expect("argv must select the mcp subtree");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+        .block_on(brontes::handle(sub, &cli, cfg))
+}
+
+#[test]
+fn every_editor_enable_carries_the_same_selection_flags() {
+    // An editor config is a launch command, so `enable` has to be able to
+    // express every selection `mcp start` accepts. A flag missing from one
+    // editor is a selection that silently cannot be installed there.
+    let mcp = brontes::command(None);
+    let expected = [
+        "group",
+        "command",
+        "tool",
+        "hide-group",
+        "hide-command",
+        "hide-tool",
+    ];
+
+    for editor in ["claude", "cursor", "vscode", "zed"] {
+        let enable = mcp
+            .find_subcommand(editor)
+            .unwrap_or_else(|| panic!("mcp {editor} must exist"))
+            .find_subcommand("enable")
+            .unwrap_or_else(|| panic!("mcp {editor} enable must exist"));
+        let present: Vec<&str> = enable
+            .get_arguments()
+            .map(|a| a.get_id().as_str())
+            .collect();
+        for flag in expected {
+            assert!(
+                present.contains(&flag),
+                "mcp {editor} enable is missing --{flag}: {present:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_editor_install_refuses_a_selection_that_would_not_start() {
+    // The editor spawns the server where nobody reads stderr, so a typo that
+    // only fails at launch reaches the user as an editor showing no tools.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("claude_desktop_config.json");
+
+    let msg = dispatch(
+        &[
+            "demo",
+            "mcp",
+            "claude",
+            "enable",
+            "--config-path",
+            path.to_str().expect("utf8 path"),
+            "--server-name",
+            "demo",
+            "--group",
+            "relase",
+        ],
+        Some(&grouped()),
+    )
+    .expect_err("a typo'd group must be caught before anything is written")
+    .to_string();
+
+    assert!(
+        msg.contains("no such group") && msg.contains("relase"),
+        "the error must name the typo: {msg}"
+    );
+    assert!(
+        !path.exists(),
+        "a rejected selection must leave no config file behind"
+    );
+}
+
+#[test]
+fn an_editor_install_writes_a_selection_it_accepted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("claude_desktop_config.json");
+
+    dispatch(
+        &[
+            "demo",
+            "mcp",
+            "claude",
+            "enable",
+            "--config-path",
+            path.to_str().expect("utf8 path"),
+            "--server-name",
+            "demo",
+            "--group",
+            "release",
+            "--hide-tool",
+            "demo_release_notes",
+        ],
+        Some(&grouped()),
+    )
+    .expect("a valid selection installs");
+
+    let doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read config")).expect("parse config");
+    let args: Vec<&str> = doc["mcpServers"]["demo"]["args"]
+        .as_array()
+        .expect("args array")
+        .iter()
+        .map(|v| v.as_str().expect("string"))
+        .collect();
+
+    assert_eq!(
+        args,
+        vec![
+            "mcp",
+            "start",
+            "--group",
+            "release",
+            "--hide-tool",
+            "demo_release_notes",
+        ]
+    );
+}
+
+#[test]
+fn listing_groups_still_works_under_a_pinned_selection() {
+    // `--groups` answers "what does this CLI define", which does not change
+    // because the server was pinned to a subset — and must not fail when the
+    // pinned subset is narrower than the groups being listed.
+    dispatch(
+        &["demo", "mcp", "tools", "--groups"],
+        Some(&grouped().expose_group("release")),
+    )
+    .expect("--groups describes the CLI, not the selection");
 }

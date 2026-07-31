@@ -90,17 +90,12 @@ pub fn arg_log_level() -> Arg {
 /// editor spawns — otherwise the tool list the user picked lasts exactly as
 /// long as the install command that asked for it. Flags are emitted in the
 /// same order on every run so re-running `enable` produces a byte-identical
-/// config file.
+/// config file. The set is read from the same table that attaches the flags,
+/// so a seventh flag cannot be accepted by `enable` and then dropped from the
+/// argv written to disk.
 pub fn push_selection_flags(args: &mut Vec<String>, matches: &clap::ArgMatches) {
-    for long in [
-        "group",
-        "command",
-        "tool",
-        "hide-group",
-        "hide-command",
-        "hide-tool",
-    ] {
-        let Some(values) = matches.get_many::<String>(long) else {
+    for (id, long, ..) in crate::subcommands::common::SELECTION_FLAGS {
+        let Some(values) = matches.get_many::<String>(id) else {
             continue;
         };
         for value in values {
@@ -108,6 +103,33 @@ pub fn push_selection_flags(args: &mut Vec<String>, matches: &clap::ArgMatches) 
             args.push(value.clone());
         }
     }
+}
+
+/// Resolve the tool list `enable` is about to register, and throw away the
+/// result.
+///
+/// An editor config is written once and spawned by the editor forever after,
+/// in a process whose stderr is nobody's terminal. A typo'd `--group` would
+/// reach the user as an editor showing no tools, with the loud startup error
+/// going to a log they never open — so the same check `mcp start` runs is run
+/// here, against the command they are watching.
+///
+/// # Errors
+///
+/// Whatever [`crate::generate_tools`] reports for the merged selection: an
+/// unknown group, a command path the CLI does not have, a selection that
+/// exposes nothing, or any other build-time configuration error.
+pub fn validate_selection(
+    matches: &clap::ArgMatches,
+    cli: &clap::Command,
+    cfg: Option<&crate::Config>,
+) -> Result<()> {
+    let merged = crate::subcommands::common::apply_selection_flags(
+        cfg.cloned().unwrap_or_default(),
+        matches,
+    );
+    crate::generate_tools(cli, &merged)?;
+    Ok(())
 }
 
 /// Merge `default_env` and the parsed `--env` flags into a single map.

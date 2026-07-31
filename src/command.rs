@@ -37,7 +37,7 @@
 //! }
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use clap::Command;
 use rmcp::model::Tool;
@@ -231,11 +231,42 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
         });
     }
 
-    // 5. Apply the tool filter last, over generated names, so `--tool` can
+    // 5. Reject a name collision before anyone can select or dispatch on it.
+    reject_duplicate_tool_names(&tools)?;
+
+    // 6. Apply the tool filter last, over generated names, so `--tool` can
     //    name what a client would see rather than what the clap tree calls it.
     apply_tool_filter(&mut tools, cfg)?;
 
     Ok(tools)
+}
+
+/// Fail when two commands generate the same MCP tool name.
+///
+/// Path separators become underscores, so a flat `by_cell` and a nested
+/// `by cell` land on the same name. A duplicate is unserviceable in three
+/// ways at once: `tools/list` advertises one name twice, dispatch resolves
+/// every call to whichever came first, and `--tool` / `--hide-tool` hit both
+/// at once. Renaming one automatically would change the served surface
+/// without saying so, so this is an error the CLI's author resolves.
+///
+/// # Errors
+///
+/// [`crate::Error::Config`] naming the tool name and both command paths.
+fn reject_duplicate_tool_names(tools: &[ResolvedTool]) -> Result<()> {
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+    for tool in tools {
+        let name = tool.tool.name.as_ref();
+        if let Some(first) = seen.insert(name, tool.command_path.as_str()) {
+            return Err(crate::Error::Config(format!(
+                "commands {first:?} and {:?} both generate the MCP tool name \
+                 {name:?}; rename one of them, since a tool name is how a \
+                 client addresses a command",
+                tool.command_path
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Trim `tools` down to what [`Config::tool_filter`] admits.
@@ -246,10 +277,10 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
 /// # Errors
 ///
 /// [`crate::Error::Config`] when the filter names a tool the CLI does not
-/// have, or when it selects nothing. Both are launch-time typos in a flag, and
-/// both would otherwise land as a server that quietly exposes the wrong set —
-/// the failure a client cannot distinguish from a CLI that simply has no such
-/// command.
+/// have, when any single selection lands on no tool, or when the whole filter
+/// leaves nothing. Each would otherwise produce a server quietly missing
+/// something the caller asked for — a failure a client cannot distinguish
+/// from a CLI that simply has no such command.
 fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> {
     if cfg.tool_filter.is_empty() {
         return Ok(());
@@ -272,6 +303,45 @@ fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> 
             .admits(&cfg.groups, &t.command_path, t.tool.name.as_ref())
     });
 
+    // Each thing asked for has to have arrived. A path can name a real command
+    // and still produce no tool — the command is deprecated, hidden, a
+    // navigation node, or filtered out by a `Selector` — and the caller who
+    // asked for it by name would otherwise get a server silently missing it.
+    for name in &cfg.tool_filter.groups {
+        let members = cfg.groups.get(name).map_or(&[][..], |g| &g.commands);
+        if !tools.iter().any(|t| {
+            members
+                .iter()
+                .any(|m| crate::toolset::covers(m, &t.command_path))
+        }) {
+            return Err(crate::Error::Config(format!(
+                "group {name:?} was selected but exposes no tools; its commands \
+                 are removed by a hide flag, deprecated, or excluded by a selector"
+            )));
+        }
+    }
+    for path in &cfg.tool_filter.commands {
+        if !tools
+            .iter()
+            .any(|t| crate::toolset::covers(path, &t.command_path))
+        {
+            return Err(crate::Error::Config(format!(
+                "command {path:?} was selected but exposes no tools; it is \
+                 removed by a hide flag, deprecated, or excluded by a selector"
+            )));
+        }
+    }
+    for name in &cfg.tool_filter.tools {
+        if !tools.iter().any(|t| t.tool.name.as_ref() == name.as_str()) {
+            return Err(crate::Error::Config(format!(
+                "tool {name:?} was selected but exposes no tools; it is removed \
+                 by a hide flag"
+            )));
+        }
+    }
+
+    // Reached only when nothing was selected in the first place — a filter of
+    // pure `hide` entries that removed everything.
     if tools.is_empty() {
         return Err(crate::Error::Config(
             "the requested tool selection matches no commands, which would start a \
@@ -314,7 +384,34 @@ fn build_tool_name(path: &str, prefix: &str) -> String {
 // than silently no-oping at request time.
 // ---------------------------------------------------------------------------
 
+/// Reject any command whose own name contains a space.
+///
+/// A space is the path separator everywhere brontes addresses a command —
+/// `Config` keys, `--command`, group members, the segment split in
+/// `should_filter`, and the underscore substitution that mints tool names. A
+/// name containing one is unaddressable and silently absorbs its neighbours,
+/// so it is refused rather than mangled.
+///
+/// # Errors
+///
+/// [`crate::Error::Config`] naming the offending command.
+fn reject_spaces_in_command_names(resolved: &[crate::walk::ResolvedCmd<'_>]) -> Result<()> {
+    for entry in resolved {
+        let name = entry.cmd.get_name();
+        if name.contains(' ') {
+            return Err(crate::Error::Config(format!(
+                "command name {name:?} contains a space; brontes joins command \
+                 paths with spaces, so a name with one cannot be addressed by \
+                 Config, by a selection flag, or by a generated tool name"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Result<()> {
+    reject_spaces_in_command_names(resolved)?;
+
     // Validate against the full walked tree (before safety filtering) so
     // that deprecated command paths are still considered valid to name.
     let valid_paths: HashSet<&str> = resolved.iter().map(|r| r.path.as_str()).collect();
@@ -443,11 +540,13 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
     Ok(())
 }
 
-/// Check that every group member and every path the tool filter names points
-/// at a real command.
+/// Check that every group member and every path the tool filter names is
+/// itself a walked command.
 ///
-/// Membership covers subtrees, so an exact-path check would wrongly reject a
-/// group written against a parent command.
+/// The check is exact membership, not subtree coverage. A parent command is
+/// its own entry in the walk, so naming one still passes; matching by prefix
+/// instead would let a path the CLI does not have (`"my"` against a CLI whose
+/// root is `"my-tool"`) silently select that whole subtree.
 ///
 /// # Errors
 ///
@@ -456,11 +555,14 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
 /// list of names that would have worked.
 fn validate_groups_and_filter(valid_paths: &HashSet<&str>, cfg: &Config) -> Result<()> {
     for (name, group) in &cfg.groups {
+        if group.commands.is_empty() {
+            return Err(crate::Error::Config(format!(
+                "group {name:?} has no commands; a group with no members can \
+                 never be selected"
+            )));
+        }
         for member in &group.commands {
-            if !valid_paths
-                .iter()
-                .any(|p| crate::toolset::covers(member, p))
-            {
+            if !valid_paths.contains(member.as_str()) {
                 return Err(crate::Error::Config(format!(
                     "group {name:?} references unknown command path {member:?}"
                 )));
@@ -484,7 +586,7 @@ fn validate_groups_and_filter(valid_paths: &HashSet<&str>, cfg: &Config) -> Resu
 
     // Group members are already folded into these paths.
     for path in cfg.tool_filter.named_paths(&cfg.groups) {
-        if !valid_paths.iter().any(|p| crate::toolset::covers(&path, p)) {
+        if !valid_paths.contains(path.as_str()) {
             return Err(crate::Error::Config(format!(
                 "no such command {path:?} to select"
             )));
@@ -625,10 +727,16 @@ pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Conf
         Some(("stream", sub)) => {
             crate::subcommands::stream::run(sub, cli.clone(), Some(cfg_owned)).await
         }
-        Some(("claude", sub)) => crate::subcommands::editor::claude::run(sub, Some(&cfg_owned)),
-        Some(("vscode", sub)) => crate::subcommands::editor::vscode::run(sub, Some(&cfg_owned)),
-        Some(("cursor", sub)) => crate::subcommands::editor::cursor::run(sub, Some(&cfg_owned)),
-        Some(("zed", sub)) => crate::subcommands::editor::zed::run(sub, Some(&cfg_owned)),
+        Some(("claude", sub)) => {
+            crate::subcommands::editor::claude::run(sub, cli, Some(&cfg_owned))
+        }
+        Some(("vscode", sub)) => {
+            crate::subcommands::editor::vscode::run(sub, cli, Some(&cfg_owned))
+        }
+        Some(("cursor", sub)) => {
+            crate::subcommands::editor::cursor::run(sub, cli, Some(&cfg_owned))
+        }
+        Some(("zed", sub)) => crate::subcommands::editor::zed::run(sub, cli, Some(&cfg_owned)),
         // Guard the internal marker subcommand: it parses cleanly through the
         // clap surface (because it is registered as a hidden subcommand), but
         // it is implementation detail and is not runnable. Surface a friendly

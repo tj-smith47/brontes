@@ -69,8 +69,13 @@ pub struct Group {
 /// Hiding always wins over exposing, so `--group release --hide-command
 /// "anodizer release notes"` reads the way it looks.
 ///
-/// A filter that names something the CLI does not have, or that ends up
-/// selecting no tools at all, is a startup error rather than an empty server.
+/// Every name, exposed or hidden, has to be one the CLI actually has; a typo
+/// is a startup error rather than a silent no-op. Exposing entries are held to
+/// more: one that resolves to a real command the server would not serve anyway
+/// — deprecated, hidden, or dropped by a [`Selector`](crate::Selector) — also
+/// fails, because a server quietly missing a tool the caller asked for is
+/// indistinguishable from a CLI that never had it. Hiding such a command is
+/// allowed, since the result is what was asked for either way.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ToolFilter {

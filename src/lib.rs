@@ -357,13 +357,13 @@ pub mod __test_internal {
     pub fn editor_run(
         editor: &str,
         matches: &clap::ArgMatches,
-        _cli: &clap::Command,
+        cli: &clap::Command,
     ) -> crate::Result<()> {
         match editor {
-            "claude" => crate::subcommands::editor::claude::run(matches, None),
-            "cursor" => crate::subcommands::editor::cursor::run(matches, None),
-            "vscode" => crate::subcommands::editor::vscode::run(matches, None),
-            "zed" => crate::subcommands::editor::zed::run(matches, None),
+            "claude" => crate::subcommands::editor::claude::run(matches, cli, None),
+            "cursor" => crate::subcommands::editor::cursor::run(matches, cli, None),
+            "vscode" => crate::subcommands::editor::vscode::run(matches, cli, None),
+            "zed" => crate::subcommands::editor::zed::run(matches, cli, None),
             other => Err(crate::Error::Config(format!(
                 "editor_run: unknown editor {other:?}"
             ))),

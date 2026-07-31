@@ -213,6 +213,9 @@ $ anodizer mcp start --group release --hide-tool anodizer_release_notes
 | by command path | `--command <PATH>` | `--hide-command <PATH>` |
 | by MCP tool name | `--tool <NAME>` | `--hide-tool <NAME>` |
 
+`mcp tools --groups` lists what a CLI defines and takes none of them — it
+describes the CLI, not one server's subset.
+
 The editor managers pass them through, so the trim sticks:
 
 ```bash
@@ -226,15 +229,24 @@ Details worth knowing:
   up `anodizer release notes` too, so groups don't go stale when you add a
   subcommand. Use `--tool` when you want a command without its children.
 - Matching respects path boundaries: `--command "anodizer release"` won't grab
-  `anodizer releases`.
+  `anodizer releases`. Paths are written with the command's real name — a clap
+  alias isn't a path.
 - Removing beats selecting, and a `hide_*` set in `Config` can't be overridden
   from the command line.
-- A selection that matches nothing fails at startup instead of quietly serving
-  an empty tool list:
+- Everything you ask for has to arrive. A name the CLI doesn't have fails at
+  startup, and so does one that resolves to a real command which won't be
+  served anyway — because it's deprecated, hidden, or excluded by a selector.
+  A server quietly missing a tool you asked for is indistinguishable from a
+  CLI that never had it. `mcp <editor> enable` runs the same check before it
+  writes anything, so a typo can't reach a config file.
 
   ```console
   $ anodizer mcp start --group relase
   Error: Config("no such group \"relase\"; this CLI defines inspect, release")
+
+  $ anodizer mcp start --command "anodizer publish"
+  Error: Config("command \"anodizer publish\" was selected but exposes no tools;
+  it is removed by a hide flag, deprecated, or excluded by a selector")
   ```
 
 Trimming happens at launch rather than per-request because `2026-07-28` dropped

@@ -18,24 +18,24 @@ use crate::toolset::ToolFilter;
 /// Kept as one table so a leaf cannot pick up `--group` without also picking
 /// up `--hide-group`: a half-present matrix is the kind of drift that makes
 /// two of these commands answer differently for the same arguments.
-const SELECTION_FLAGS: [(&str, &str, &str, &str); 6] = [
+pub const SELECTION_FLAGS: [(&str, &str, &str, &str); 6] = [
     (
         "group",
         "group",
         "NAME",
-        "Expose only this group of commands (repeat for several)",
+        "Restrict the tool list to this group's commands (repeat to add groups)",
     ),
     (
         "command",
         "command",
         "PATH",
-        "Expose only this command and its subcommands, e.g. --command \"cli release\" (repeat for several)",
+        "Restrict the tool list to this command and its subcommands, e.g. --command \"cli release\" (repeat to add commands)",
     ),
     (
         "tool",
         "tool",
         "NAME",
-        "Expose only this MCP tool, by its generated name (repeat for several)",
+        "Restrict the tool list to this MCP tool, named as `mcp tools` prints it (repeat to add tools)",
     ),
     (
         "hide-group",

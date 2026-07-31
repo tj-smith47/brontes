@@ -35,7 +35,22 @@ pub fn build() -> Command {
                 Arg::new("groups")
                     .long("groups")
                     .action(clap::ArgAction::SetTrue)
-                    .help("List the command groups this CLI defines, then exit"),
+                    // `--groups` describes the CLI rather than one server's
+                    // subset, so it ignores a selection. Conflicting rather
+                    // than ignoring silently keeps `--groups --group x` from
+                    // looking like it filtered the listing.
+                    .conflicts_with_all([
+                        "group",
+                        "command",
+                        "tool",
+                        "hide-group",
+                        "hide-command",
+                        "hide-tool",
+                    ])
+                    .help(
+                        "List the command groups this CLI defines, then exit \
+                         (cannot be combined with the selection flags)",
+                    ),
             ),
     )
 }
@@ -53,7 +68,7 @@ pub fn build() -> Command {
 /// - [`crate::Error::Io`] if the output file cannot be written.
 pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<()> {
     let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
-    init_tracing(parse_log_level(matches).or(cfg.log_level));
+    init_tracing(super::common::parse_log_level(matches).or(cfg.log_level));
 
     if matches.get_flag("groups") {
         return list_groups(cli, &cfg);
@@ -86,8 +101,10 @@ pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<(
 /// a group whose members no longer exist should be reported as the
 /// configuration error it is rather than listed with a count of zero.
 fn list_groups(cli: &Command, cfg: &Config) -> Result<()> {
-    // Count against the untrimmed list: `--groups` describes the CLI, not the
-    // subset the same invocation's selection flags would serve.
+    // Counted against the untrimmed list. `--groups` answers "what does this
+    // CLI define", which does not change because one server was started with
+    // a subset — and a `Config`-pinned filter would otherwise make the listing
+    // report zeroes, or refuse to run at all.
     let mut unfiltered = cfg.clone();
     unfiltered.tool_filter = crate::ToolFilter::default();
     let tools = crate::command::generate_tools_with_middleware(cli, &unfiltered)?;
@@ -119,8 +136,18 @@ fn list_groups(cli: &Command, cfg: &Config) -> Result<()> {
         })
         .collect();
 
-    let name_width = rows.iter().map(|(n, ..)| n.len()).max().unwrap_or(0);
-    let count_width = rows.iter().map(|(_, c, _)| c.len()).max().unwrap_or(0);
+    // Column widths in characters, not bytes: `{:<width$}` pads by character
+    // count, so a byte length would over-pad any group name outside ASCII.
+    let name_width = rows
+        .iter()
+        .map(|(n, ..)| n.chars().count())
+        .max()
+        .unwrap_or(0);
+    let count_width = rows
+        .iter()
+        .map(|(_, c, _)| c.chars().count())
+        .max()
+        .unwrap_or(0);
     for (name, count, about) in rows {
         println!("{name:<name_width$}  {count:<count_width$}  {about}");
     }
@@ -169,21 +196,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         source: e.error,
     })?;
     Ok(())
-}
-
-/// Same as [`crate::subcommands::start::parse_log_level`] but local to this
-/// module for cohesion — keeping the per-subcommand log-level handling
-/// inside the subcommand keeps the surface easy to evolve independently.
-fn parse_log_level(matches: &ArgMatches) -> Option<Level> {
-    let raw = matches.get_one::<String>("log-level")?;
-    match raw.to_ascii_lowercase().as_str() {
-        "trace" => Some(Level::TRACE),
-        "debug" => Some(Level::DEBUG),
-        "info" => Some(Level::INFO),
-        "warn" | "warning" => Some(Level::WARN),
-        "error" => Some(Level::ERROR),
-        _ => None,
-    }
 }
 
 fn init_tracing(level: Option<Level>) {

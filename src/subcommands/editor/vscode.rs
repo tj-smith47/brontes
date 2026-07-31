@@ -100,9 +100,9 @@ pub fn build() -> Command {
 /// - [`crate::Error::Io`] when [`std::env::current_exe`] fails.
 /// - [`crate::Error::EditorConfigRead`] / `Json` / `Backup` / `Write`
 ///   when the underlying [`Manager`] hits a filesystem error.
-pub fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
+pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<&Config>) -> Result<()> {
     match matches.subcommand() {
-        Some(("enable", sub)) => run_enable(sub, cfg),
+        Some(("enable", sub)) => run_enable(sub, cli, cfg),
         Some(("disable", sub)) => run_disable(sub),
         Some(("list", sub)) => run_list(sub),
         Some((other, _)) => Err(crate::Error::Config(format!(
@@ -114,7 +114,9 @@ pub fn run(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
     }
 }
 
-fn run_enable(matches: &ArgMatches, cfg: Option<&Config>) -> Result<()> {
+fn run_enable(matches: &ArgMatches, cli: &Command, cfg: Option<&Config>) -> Result<()> {
+    super::validate_selection(matches, cli, cfg)?;
+
     let path = resolve_config_path(matches);
 
     // Build the env map: start with default_env, overlay --env KEY=VAL.
