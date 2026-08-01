@@ -51,12 +51,32 @@ tasks:
     cmds:
       - cargo deny check
 
+  changelog:check:
+    desc: Verify every released tag has its own CHANGELOG section
+    # The release pipeline generates GitHub notes from git (`changelog.use: git`)
+    # and never touches CHANGELOG.md, so nothing but this closes the section
+    # for a version that just shipped. Without it entries pile up under
+    # [Unreleased] release after release, unattributable once the memory fades.
+    cmds:
+      - |
+        set -eu
+        missing=
+        for tag in $(git tag --merged HEAD --list 'v*'); do
+          grep -qF "## [${tag#v}]" CHANGELOG.md || missing="$missing $tag"
+        done
+        if [ -n "$missing" ]; then
+          echo "CHANGELOG.md has no section for:$missing" >&2
+          echo "Move the shipped entries out of [Unreleased] into '## [x.y.z] - YYYY-MM-DD'." >&2
+          exit 1
+        fi
+
   ci:
     desc: Full local CI sweep (fmt, clippy, test, audit, deny, doc)
     cmds:
       - task: fmt:check
       - task: clippy
       - task: test
+      - task: changelog:check
       - task: audit
       - task: deny
       - task: doc
