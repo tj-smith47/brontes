@@ -102,6 +102,11 @@ pub use error::{Error, Result};
 // guaranteed to be the same `CacheScope` the linked rmcp expects rather than
 // one from a different rmcp major version in their own tree.
 pub use rmcp::model::CacheScope;
+// Re-exported for the same reason as `CacheScope`: [`generate_tools`] hands
+// back a `Vec<Tool>`, and a consumer who names that type — in a test helper,
+// or a function that post-processes the list — should not have to add an
+// `rmcp` dependency, nor risk naming a `Tool` from a different rmcp major.
+pub use rmcp::model::Tool;
 pub use schema::SchemaType;
 pub use selector::{
     BoxedNext, CmdMatcher, FlagMatcher, Middleware, MiddlewareCtx, MiddlewareOutcome,

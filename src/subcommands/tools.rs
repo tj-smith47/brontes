@@ -46,6 +46,7 @@ pub fn build() -> Command {
                         "hide-group",
                         "hide-command",
                         "hide-tool",
+                        super::common::ALL_FLAG,
                     ])
                     .help(
                         "List the command groups this CLI defines, then exit \

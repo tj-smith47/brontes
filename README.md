@@ -177,7 +177,7 @@ Shared flags on every `enable`:
 | `--server-name <NAME>` | Override the MCP server key written into the config (defaults to the binary name) |
 | `--env KEY=VAL` (`-e`, repeatable) | Append environment variables the editor will inject when launching the server |
 | `--log-level <LEVEL>` | Set the server's tracing level (`trace`/`debug`/`info`/`warn`/`error`) |
-| `--group` / `--command` / `--tool` and `--hide-*` (repeatable) | Register a trimmed tool list — written into the `mcp start` args the editor spawns. See [Trimming the tool list](#trimming-the-tool-list) |
+| `--group` / `--command` / `--tool` and `--hide-*` (repeatable), `--all` | Register a trimmed tool list — written into the `mcp start` args the editor spawns. See [Trimming the tool list](#trimming-the-tool-list) |
 
 `--workspace` is additionally accepted on `cursor`, `vscode`, AND `zed`'s
 `enable`, `disable`, and `list` leaves — pass it whenever you want the
@@ -225,7 +225,7 @@ $ anodizer mcp start --tool anodizer_release --tool anodizer_publish
 $ anodizer mcp start --group release --hide-tool anodizer_release_notes
 ```
 
-`mcp start`, `mcp stream`, and `mcp tools` all take the same six flags, so
+`mcp start`, `mcp stream`, and `mcp tools` all take the same seven flags, so
 `mcp tools` shows you exactly what a server would serve:
 
 | | select | remove |
@@ -233,6 +233,21 @@ $ anodizer mcp start --group release --hide-tool anodizer_release_notes
 | by group | `--group <NAME>` | `--hide-group <NAME>` |
 | by command path | `--command <PATH>` | `--hide-command <PATH>` |
 | by MCP tool name | `--tool <NAME>` | `--hide-tool <NAME>` |
+| everything | `--all` | — |
+
+A CLI can pin a default selection in `Config` — sensible when the command tree
+is large enough that serving all of it costs more context than it's worth.
+Since every other flag above is additive, `--all` is how a user gets back to
+the full list:
+
+```bash
+$ cfgd mcp tools                   # what the CLI pins: 9 tools
+$ cfgd mcp tools --group modules   # 19
+$ cfgd mcp tools --all             # 86
+```
+
+`--all` discards the exposing side only. A `hide_*` the CLI's author set stays
+set, so `--all --hide-command secrets` reads the way it looks.
 
 `mcp tools --groups` lists what a CLI defines and takes none of them — it
 describes the CLI, not one server's subset.
@@ -283,7 +298,7 @@ tool sets means two servers, which is how editor configs work anyway.
 - **Streamable HTTP MCP server** — `mcp stream` exposes the same tool list over HTTP via rmcp 3.0; loopback-only by default, widen with `--allow-host`.
 - **MCP `2026-07-28` support** — stateless requests, `server/discover`, the Tasks extension, MRTR, SEP-2243 header promotion, and SEP-2549 cache hints, with every earlier protocol revision back to `2024-11-05` still negotiable. See [Protocol support](#protocol-support).
 - **Command groups** — `Config::group(name, paths)` names a bundle of related commands so users can ask for it by name. See [Trimming the tool list](#trimming-the-tool-list).
-- **Launch-time tool selection** — `--group` / `--command` / `--tool` and their `--hide-` counterparts on `mcp start`, `mcp stream`, and `mcp tools` start a server with only the tools a given job needs. The editor managers write the selection into the config they register.
+- **Launch-time tool selection** — `--group` / `--command` / `--tool` and their `--hide-` counterparts on `mcp start`, `mcp stream`, and `mcp tools` start a server with only the tools a given job needs, and `--all` discards a selection the CLI pinned. The editor managers write the selection into the config they register.
 - **Editor managers** for Claude Desktop, Cursor, VSCode, and Zed — each with `enable` / `disable` / `list` leaves, `--workspace` per-project mode where applicable, and snapshot-before-write backups. Zed preserves unrelated `settings.json` keys (theme, font, keymap) and tolerates JSONC on load.
 - **Long-running commands as tasks** — `Config::task_mode_for(path, TaskMode::Detached)` answers `tools/call` with a handle the client polls, answers, and cancels, instead of blocking for the length of a release. See [Long-running commands as tasks](#long-running-commands-as-tasks-sep-2663).
 - **Async middleware** — `Middleware` wraps tool execution for auth, audit logging, rate limiting, or distributed tracing without forking the runtime.
@@ -446,7 +461,7 @@ $ my-cli mcp stream --host 0.0.0.0 --port 8080 \
 | `--port <PORT>` | `8080` | TCP port |
 | `--log-level <LEVEL>` | `info` | trace / debug / info / warn / error |
 | `--allow-host <HOST>` | *(none)* | Append to rmcp's DNS-rebind allow-list (repeatable) |
-| `--group` / `--command` / `--tool`, `--hide-*` | *(none)* | Trim the tool list; see [Trimming the tool list](#trimming-the-tool-list) |
+| `--group` / `--command` / `--tool`, `--hide-*`, `--all` | *(none)* | Trim the tool list; see [Trimming the tool list](#trimming-the-tool-list) |
 
 See [SECURITY.md](SECURITY.md) for the full HTTP-transport threat model.
 

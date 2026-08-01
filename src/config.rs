@@ -1012,6 +1012,27 @@ impl Config {
         self
     }
 
+    /// Discard every exposure pinned so far and serve the whole tool list, as
+    /// `--all` does.
+    ///
+    /// Every other `expose_*` method is additive, so a CLI that ships a
+    /// trimmed default would otherwise be trimmed forever — an end user could
+    /// widen it one group at a time but never get back to the full list. This
+    /// is the way out. Hiding is untouched: a command the CLI's author removed
+    /// stays removed.
+    ///
+    /// ```rust
+    /// use brontes::Config;
+    ///
+    /// let cfg = Config::default().expose_group("release").expose_all();
+    /// assert!(!cfg.tool_filter.selects());
+    /// ```
+    #[must_use]
+    pub const fn expose_all(mut self) -> Self {
+        self.tool_filter.expose_all = true;
+        self
+    }
+
     /// Expose a command and everything under it, as `--command <PATH>` does.
     ///
     /// ```rust

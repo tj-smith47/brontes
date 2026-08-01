@@ -64,7 +64,8 @@ pub struct Group {
 /// and the [`Selector`](crate::Selector) pass. Otherwise:
 ///
 /// 1. if any of `groups` / `commands` / `tools` is non-empty, the tool list
-///    starts as the **union** of what they name;
+///    starts as the **union** of what they name — unless `expose_all` is set,
+///    which discards all three and starts from the full list;
 /// 2. everything named by `hidden_groups` / `hidden_commands` / `hidden_tools`
 ///    is then removed.
 ///
@@ -93,6 +94,15 @@ pub struct ToolFilter {
     pub hidden_commands: BTreeSet<String>,
     /// MCP tool names to remove, matched exactly.
     pub hidden_tools: BTreeSet<String>,
+    /// Discard the exposing sets and serve every command that survives the
+    /// hiding sets.
+    ///
+    /// The way back out of an exposure a CLI's author pinned in
+    /// [`Config`](crate::Config): every other entry here is additive, so
+    /// without this a shipped default could only ever be widened one group at
+    /// a time. Hiding is unaffected — a command the author removed for a
+    /// reason stays removed.
+    pub expose_all: bool,
 }
 
 impl ToolFilter {
@@ -100,6 +110,11 @@ impl ToolFilter {
     ///
     /// A no-op filter skips the "selected nothing" check entirely: a CLI with
     /// no commands is its own (already-reported) problem, not a trim failure.
+    ///
+    /// [`ToolFilter::expose_all`] is deliberately not consulted: on its own it
+    /// asks for the untrimmed list, which is what an empty filter already
+    /// yields, and it names no command path for path normalization to rewrite.
+    /// Counting it here would cost both fast paths and buy nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.groups.is_empty()
@@ -113,10 +128,15 @@ impl ToolFilter {
     /// Whether any of the three exposing sets is populated.
     ///
     /// When none is, the filter subtracts from the full tool list instead of
-    /// building up from an empty one.
+    /// building up from an empty one. [`ToolFilter::expose_all`] forces that
+    /// subtracting form, which is what makes it an escape hatch rather than
+    /// one more thing to union.
     #[must_use]
     pub fn selects(&self) -> bool {
-        !(self.groups.is_empty() && self.commands.is_empty() && self.tools.is_empty())
+        if self.expose_all {
+            return false;
+        }
+        !self.groups.is_empty() || !self.commands.is_empty() || !self.tools.is_empty()
     }
 
     /// Merge `other`'s entries into this filter.
@@ -135,6 +155,7 @@ impl ToolFilter {
         self.hidden_commands
             .extend(other.hidden_commands.iter().cloned());
         self.hidden_tools.extend(other.hidden_tools.iter().cloned());
+        self.expose_all |= other.expose_all;
         self
     }
 
@@ -191,6 +212,7 @@ impl ToolFilter {
             hidden_groups: self.hidden_groups.clone(),
             hidden_commands: resolve(&self.hidden_commands),
             hidden_tools: self.hidden_tools.clone(),
+            expose_all: self.expose_all,
         }
     }
 

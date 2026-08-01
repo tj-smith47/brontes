@@ -825,3 +825,110 @@ fn a_promoted_flag_takes_a_relative_path() {
         promoted(&relative)
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Getting back out of an exposure the CLI pinned
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn all_discards_an_exposure_the_cli_pinned() {
+    // Every other selection entry is additive, so without this a CLI that
+    // ships a trimmed default is trimmed forever: an end user could widen it
+    // one group at a time but never reach the full list.
+    let pinned = grouped().expose_group("secrets");
+    let trimmed = names(&pinned);
+    assert!(
+        !trimmed.contains(&"demo_status".to_string()),
+        "the pinned default must trim: {trimmed:?}"
+    );
+
+    let full = names(&pinned.expose_all());
+    assert_eq!(
+        full,
+        names(&Config::default()),
+        "--all must reach the same list a CLI with no pinned exposure serves"
+    );
+}
+
+#[test]
+fn all_does_not_reopen_a_command_the_cli_hid() {
+    // Hiding is a decision the CLI's author made about what is safe to serve.
+    // Widening the exposure must not overrule it.
+    let got = names(&Config::default().hide_command("secrets").expose_all());
+    assert!(
+        !got.iter().any(|n| n.starts_with("demo_secrets")),
+        "a hidden subtree must stay hidden under --all: {got:?}"
+    );
+    assert!(
+        got.contains(&"demo_status".to_string()),
+        "the rest of the tree must still be served: {got:?}"
+    );
+}
+
+#[test]
+fn all_conflicts_with_the_exposing_flags() {
+    // `--all --group x` asks for two different tool lists. Rejecting it at
+    // parse time beats silently honouring one of them.
+    for flag in ["--group", "--command", "--tool"] {
+        let err = mounted()
+            .try_get_matches_from(["demo", "mcp", "start", "--all", flag, "release"])
+            .expect_err("--all and an exposing flag must not parse together");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "expected a conflict for {flag}, got: {err}"
+        );
+    }
+}
+
+#[test]
+fn all_composes_with_the_hiding_flags() {
+    dispatch(
+        &["demo", "mcp", "tools", "--all", "--hide-command", "secrets"],
+        Some(&grouped().expose_group("release")),
+    )
+    .expect("--all with a hide flag must be accepted");
+}
+
+#[test]
+fn an_editor_install_writes_the_all_flag_it_accepted() {
+    // The validation runs against the merged selection, but the editor spawns
+    // the argv that gets written. A dropped `--all` would install a server
+    // serving the pinned subset while the install command reported the full
+    // list — a divergence nobody sees until a tool is missing.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("claude_desktop_config.json");
+
+    dispatch(
+        &[
+            "demo",
+            "mcp",
+            "claude",
+            "enable",
+            "--config-path",
+            path.to_str().expect("utf8 path"),
+            "--server-name",
+            "demo",
+            "--all",
+            "--hide-command",
+            "secrets",
+        ],
+        Some(&grouped().expose_group("release")),
+    )
+    .expect("a valid selection installs");
+
+    let doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read config")).expect("parse config");
+    let args: Vec<&str> = doc["mcpServers"]["demo"]["args"]
+        .as_array()
+        .expect("args array")
+        .iter()
+        .map(|v| v.as_str().expect("string"))
+        .collect();
+
+    assert_eq!(
+        args,
+        vec!["mcp", "start", "--hide-command", "secrets", "--all"],
+        "the installed launch line must carry the flag that made it valid"
+    );
+}

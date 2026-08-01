@@ -309,6 +309,13 @@ fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> 
     // and still produce no tool — the command is deprecated, hidden, a
     // navigation node, or filtered out by a `Selector` — and the caller who
     // asked for it by name would otherwise get a server silently missing it.
+    //
+    // `expose_all` discarded the exposing sets, so nothing in them was asked
+    // for: holding a pinned group to an arrival it was overruled out of would
+    // fail a launch line that never named it.
+    if cfg.tool_filter.expose_all {
+        return reject_empty_selection(tools);
+    }
     for name in &cfg.tool_filter.groups {
         let members = cfg.groups.get(name).map_or(&[][..], |g| &g.commands);
         if !tools.iter().any(|t| {
@@ -342,8 +349,14 @@ fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> 
         }
     }
 
-    // Reached only when nothing was selected in the first place — a filter of
-    // pure `hide` entries that removed everything.
+    reject_empty_selection(tools)
+}
+
+/// Reject a selection that left nothing to serve.
+///
+/// Reached when nothing was selected in the first place — a filter of pure
+/// `hide` entries that removed everything.
+fn reject_empty_selection(tools: &[ResolvedTool]) -> Result<()> {
     if tools.is_empty() {
         return Err(crate::Error::Config(
             "the requested tool selection matches no commands, which would start a \
@@ -351,7 +364,6 @@ fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> 
                 .to_owned(),
         ));
     }
-
     Ok(())
 }
 

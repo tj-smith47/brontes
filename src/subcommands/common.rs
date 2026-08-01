@@ -57,10 +57,14 @@ pub const SELECTION_FLAGS: [(&str, &str, &str, &str); 6] = [
     ),
 ];
 
+/// The clap id of the flag that discards a pinned exposure.
+pub const ALL_FLAG: &str = "all";
+
 /// Attach the tool-selection flags to an `mcp` leaf.
 ///
 /// The set is deliberately a 2×3 matrix — expose or hide, by group, command,
-/// or tool — so a user who learns one flag has learned all six.
+/// or tool — so a user who learns one flag has learned all six, plus `--all`
+/// as the way back out of an exposure the CLI's author pinned.
 pub fn with_selection_flags(mut cmd: Command) -> Command {
     for (id, long, value_name, help) in SELECTION_FLAGS {
         cmd = cmd.arg(
@@ -71,7 +75,16 @@ pub fn with_selection_flags(mut cmd: Command) -> Command {
                 .help(help),
         );
     }
-    cmd
+    cmd.arg(
+        Arg::new(ALL_FLAG)
+            .long(ALL_FLAG)
+            .action(ArgAction::SetTrue)
+            .conflicts_with_all(["group", "command", "tool"])
+            .help(
+                "Serve every tool, discarding any exposure this CLI pins by default. \
+                 Hiding still wins, so --hide-command and friends compose with it",
+            ),
+    )
 }
 
 /// Fold the tool-selection flags from `matches` onto `cfg`.
@@ -94,6 +107,7 @@ pub fn apply_selection_flags(cfg: Config, matches: &ArgMatches) -> Config {
         hidden_groups: values("hide-group"),
         hidden_commands: values("hide-command"),
         hidden_tools: values("hide-tool"),
+        expose_all: matches.get_flag(ALL_FLAG),
         ..Default::default()
     };
 

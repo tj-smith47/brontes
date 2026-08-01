@@ -103,6 +103,9 @@ pub fn push_selection_flags(args: &mut Vec<String>, matches: &clap::ArgMatches) 
             args.push(value.clone());
         }
     }
+    if matches.get_flag(crate::subcommands::common::ALL_FLAG) {
+        args.push(format!("--{}", crate::subcommands::common::ALL_FLAG));
+    }
 }
 
 /// Resolve the tool list `enable` is about to register, and throw away the
