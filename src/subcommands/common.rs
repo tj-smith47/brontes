@@ -92,7 +92,12 @@ pub fn with_selection_flags(mut cmd: Command) -> Command {
 /// The flags merge with whatever the CLI's author already pinned in
 /// [`Config::tool_filter`] rather than replacing it, so a developer who ships
 /// a hidden command keeps it hidden no matter what the launch line asks for.
-pub fn apply_selection_flags(cfg: Config, matches: &ArgMatches) -> Config {
+///
+/// Both sides are resolved against `root` first. The merge decides which
+/// pinned entries a launch-line hide overrules, and `"release"` and
+/// `"demo release"` have to be the same command by then for that comparison
+/// to mean anything.
+pub fn apply_selection_flags(cfg: Config, root: &str, matches: &ArgMatches) -> Config {
     let values = |id: &str| -> std::collections::BTreeSet<String> {
         matches
             .get_many::<String>(id)
@@ -112,7 +117,10 @@ pub fn apply_selection_flags(cfg: Config, matches: &ArgMatches) -> Config {
     };
 
     let mut cfg = cfg;
-    cfg.tool_filter = cfg.tool_filter.clone().merged_with(&from_flags);
+    cfg.tool_filter = cfg
+        .tool_filter
+        .normalized(root)
+        .merged_with(&from_flags.normalized(root));
     cfg
 }
 
@@ -173,7 +181,7 @@ mod tests {
             "--hide-tool",
             "cli_secrets_get",
         ]);
-        let cfg = apply_selection_flags(Config::default(), &matches);
+        let cfg = apply_selection_flags(Config::default(), "cli", &matches);
 
         assert_eq!(cfg.tool_filter.groups.len(), 2);
         assert!(cfg.tool_filter.commands.contains("cli publish"));
@@ -186,14 +194,18 @@ mod tests {
     #[test]
     fn no_flags_leaves_the_filter_untouched() {
         let matches = parse(&["leaf"]);
-        let cfg = apply_selection_flags(Config::default(), &matches);
+        let cfg = apply_selection_flags(Config::default(), "cli", &matches);
         assert!(cfg.tool_filter.is_empty());
     }
 
     #[test]
     fn flags_merge_onto_a_developer_pinned_filter() {
         let matches = parse(&["leaf", "--group", "release"]);
-        let cfg = apply_selection_flags(Config::default().hide_command("cli secrets"), &matches);
+        let cfg = apply_selection_flags(
+            Config::default().hide_command("cli secrets"),
+            "cli",
+            &matches,
+        );
 
         assert!(cfg.tool_filter.groups.contains("release"));
         assert!(

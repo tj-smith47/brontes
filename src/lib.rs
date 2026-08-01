@@ -300,8 +300,12 @@ pub mod __test_internal {
     /// Fold the tool-selection flags in `matches` onto `cfg`, as each `mcp`
     /// leaf does at startup.
     #[must_use]
-    pub fn apply_selection_flags(cfg: crate::Config, matches: &clap::ArgMatches) -> crate::Config {
-        crate::subcommands::common::apply_selection_flags(cfg, matches)
+    pub fn apply_selection_flags(
+        cfg: crate::Config,
+        root: &str,
+        matches: &clap::ArgMatches,
+    ) -> crate::Config {
+        crate::subcommands::common::apply_selection_flags(cfg, root, matches)
     }
 
     /// Append the tool-selection flags in `matches` to a generated

@@ -68,7 +68,8 @@ pub fn build() -> Command {
 ///   `generate_tools` for invalid configuration.
 /// - [`crate::Error::Io`] if the output file cannot be written.
 pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<()> {
-    let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
+    let cfg =
+        super::common::apply_selection_flags(cfg.unwrap_or_default(), cli.get_name(), matches);
     init_tracing(super::common::parse_log_level(matches).or(cfg.log_level));
 
     if matches.get_flag("groups") {

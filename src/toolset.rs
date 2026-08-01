@@ -145,8 +145,36 @@ impl ToolFilter {
     /// author already pinned in [`Config`](crate::Config), so a developer
     /// default and an end-user choice compose rather than one silently
     /// replacing the other.
+    ///
+    /// When `other` names a selection of its own, an exposing entry on this
+    /// side that `other` also hides is dropped rather than merged. The
+    /// exposing sets union, so a pinned default is otherwise a floor no launch
+    /// line can get under: `--group x` on a CLI pinning `y` serves `x` padded
+    /// with `y`, and `--hide-group y` — the obvious way to say "just x" —
+    /// would be read as `y` failing to arrive and rejected. This is the mirror
+    /// of a hide pinned in [`Config`](crate::Config), which an end user still
+    /// cannot undo; only the side that yields changes. Both sides naming the
+    /// same entry stays an error, because there it is one author contradicting
+    /// themselves rather than two composing.
+    ///
+    /// The drop only holds while something is still exposed afterwards. An
+    /// empty exposing set means "subtract from the whole tree", so a launch
+    /// line that hid every exposed entry and named no replacement would be
+    /// handed every tool outside the pin — a flag whose whole job is removal
+    /// widening the server. Kept instead, the pin fails the arrival check and
+    /// names what the launch line collided with.
     #[must_use]
     pub fn merged_with(mut self, other: &Self) -> Self {
+        let mut narrowed = self.clone();
+        narrowed.groups.retain(|g| !other.hidden_groups.contains(g));
+        narrowed
+            .commands
+            .retain(|c| !covers_any(&other.hidden_commands, c));
+        narrowed.tools.retain(|t| !other.hidden_tools.contains(t));
+        if narrowed.selects() || other.selects() {
+            self = narrowed;
+        }
+
         self.groups.extend(other.groups.iter().cloned());
         self.commands.extend(other.commands.iter().cloned());
         self.tools.extend(other.tools.iter().cloned());

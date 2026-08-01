@@ -323,6 +323,18 @@ fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> 
                 .iter()
                 .any(|m| crate::toolset::covers(m, &t.command_path))
         }) {
+            // Both sides naming one group is the shape a user lands on trying
+            // to shed a pinned default with nothing but a hide, and the
+            // generic wording would tell them a group they never typed failed
+            // to arrive. Name the two ways out instead.
+            if cfg.tool_filter.hidden_groups.contains(name) {
+                return Err(crate::Error::Config(format!(
+                    "group {name:?} is both exposed and hidden. Hiding what a \
+                     CLI exposes by default needs somewhere to land: add the \
+                     selection you want (--group / --command / --tool), or use \
+                     --all to drop the default and serve everything else"
+                )));
+            }
             return Err(crate::Error::Config(format!(
                 "group {name:?} was selected but exposes no tools; its commands \
                  are removed by a hide flag, deprecated, or excluded by a selector"

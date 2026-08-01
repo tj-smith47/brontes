@@ -31,7 +31,8 @@ pub fn build() -> Command {
 /// configuration.
 pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
     let log_level = parse_log_level(matches);
-    let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
+    let cfg =
+        super::common::apply_selection_flags(cfg.unwrap_or_default(), cli.get_name(), matches);
     crate::server::stdio::serve_stdio(cli, Some(cfg), log_level).await
 }
 

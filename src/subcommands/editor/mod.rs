@@ -129,6 +129,7 @@ pub fn validate_selection(
 ) -> Result<()> {
     let merged = crate::subcommands::common::apply_selection_flags(
         cfg.cloned().unwrap_or_default(),
+        cli.get_name(),
         matches,
     );
     crate::generate_tools(cli, &merged)?;

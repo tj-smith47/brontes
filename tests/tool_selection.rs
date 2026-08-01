@@ -169,6 +169,7 @@ fn a_developer_hide_survives_an_end_user_selection() {
     // Config must not be undoable from the launch line.
     let cfg = brontes::__test_internal::apply_selection_flags(
         grouped().hide_command("demo secrets"),
+        "demo",
         &brontes::__test_internal::start_subcommand()
             .try_get_matches_from(["start", "--command", "demo secrets"])
             .expect("parses"),
@@ -291,6 +292,7 @@ fn the_launch_flags_produce_the_same_list_as_the_builders() {
     // this is the check that they stay one mechanism.
     let from_flags = brontes::__test_internal::apply_selection_flags(
         grouped(),
+        "demo",
         &brontes::__test_internal::start_subcommand()
             .try_get_matches_from([
                 "start",
@@ -718,6 +720,7 @@ fn hiding_takes_a_relative_path_too() {
 fn the_launch_flags_take_a_relative_path() {
     let from_flags = brontes::__test_internal::apply_selection_flags(
         Config::default(),
+        "demo",
         &brontes::__test_internal::start_subcommand()
             .try_get_matches_from([
                 "start",
@@ -930,5 +933,131 @@ fn an_editor_install_writes_the_all_flag_it_accepted() {
         args,
         vec!["mcp", "start", "--hide-command", "secrets", "--all"],
         "the installed launch line must carry the flag that made it valid"
+    );
+}
+
+/// Fold a launch line onto a pinned config the way every `mcp` leaf does.
+fn launched(cfg: Config, argv: &[&str]) -> Config {
+    brontes::__test_internal::apply_selection_flags(
+        cfg,
+        "demo",
+        &brontes::__test_internal::start_subcommand()
+            .try_get_matches_from(std::iter::once("start").chain(argv.iter().copied()))
+            .expect("the launch line parses"),
+    )
+}
+
+#[test]
+fn hiding_a_pinned_group_narrows_to_the_group_asked_for() {
+    // `--all` reaches the full list; this reaches a *smaller* one. Every
+    // exposing entry unions, so a pinned default is otherwise a floor no
+    // launch line can get under: the group a user asks for arrives padded
+    // with the pin, and saying "just this one" has no spelling at all.
+    let cfg = launched(
+        grouped().expose_group("release"),
+        &["--group", "secrets", "--hide-group", "release"],
+    );
+    let got = names(&cfg);
+    assert_eq!(
+        got,
+        vec!["demo_secrets".to_string(), "demo_secrets_get".to_string()],
+        "hiding the pinned group must leave only what was asked for: {got:?}"
+    );
+}
+
+#[test]
+fn hiding_a_pinned_command_takes_the_relative_spelling() {
+    // The pin and the launch line are written by different people and need
+    // not agree on whether to spell the root. If the merge compared them raw,
+    // whether the override worked would depend on that choice.
+    let got = names(&launched(
+        grouped()
+            .expose_command("demo secrets")
+            .expose_group("release"),
+        &["--hide-command", "secrets"],
+    ));
+    assert!(
+        !got.iter().any(|n| n.starts_with("demo_secrets")),
+        "a relative hide must overrule an absolute pin: {got:?}"
+    );
+    assert!(
+        got.contains(&"demo_release".to_string()),
+        "the rest of the pin must still be served: {got:?}"
+    );
+}
+
+#[test]
+fn hiding_a_pinned_tool_leaves_the_rest_of_the_pin() {
+    let got = names(&launched(
+        Config::default()
+            .expose_tool("demo_status")
+            .expose_tool("demo_publish"),
+        &["--hide-tool", "demo_status"],
+    ));
+    assert_eq!(
+        got,
+        vec!["demo_publish".to_string()],
+        "the un-hidden half of the pin must be what is served: {got:?}"
+    );
+}
+
+#[test]
+fn a_launch_line_still_cannot_undo_a_pinned_hide() {
+    // Only the yielding side changes. A hide the CLI's author pinned is a
+    // decision about what is safe to serve, and an end user overruling it
+    // would be a privilege escalation dressed up as a flag.
+    let cfg = launched(
+        grouped().hide_command("demo secrets"),
+        &["--command", "secrets"],
+    );
+    let err = generate_tools(&cli(), &cfg).expect_err("nothing survives the hide");
+    assert!(
+        err.to_string().contains("secrets"),
+        "the command caught between the two must be named, got {err}"
+    );
+}
+
+#[test]
+fn hiding_the_whole_pin_without_narrowing_to_anything_is_rejected() {
+    // The drop is what narrowing costs, and narrowing has to name a target.
+    // Hiding the entire pin and selecting nothing would otherwise empty the
+    // exposing sets, which reads as "subtract from the whole tree" — so a
+    // flag that only removes would hand back every tool outside the pin.
+    // A hide must never widen a server.
+    let cfg = launched(
+        grouped().expose_group("secrets"),
+        &["--hide-group", "secrets"],
+    );
+    let msg = generate_tools(&cli(), &cfg)
+        .expect_err("hiding the whole pin must be rejected")
+        .to_string();
+    assert!(
+        msg.contains("secrets"),
+        "the group caught between the two must be named, got: {msg}"
+    );
+    // The user typed one flag, and it was a hide. Telling them a group failed
+    // to arrive describes a selection they never made; both ways forward have
+    // to be in the message.
+    assert!(
+        msg.contains("--group") && msg.contains("--all"),
+        "the message must name both ways out, got: {msg}"
+    );
+}
+
+#[test]
+fn a_misspelled_group_survives_the_override() {
+    // The override drops pinned entries a hide overruled. The typo guard has
+    // to outlive that: a group the CLI never defined names nothing to
+    // overrule, so it is still a launch line that will not land.
+    let cfg = launched(
+        grouped().expose_group("secrets"),
+        &["--group", "relaese", "--hide-group", "secrets"],
+    );
+    let msg = generate_tools(&cli(), &cfg)
+        .expect_err("a misspelled group must be rejected")
+        .to_string();
+    assert!(
+        msg.contains("relaese"),
+        "a misspelled group must still be named, got: {msg}"
     );
 }

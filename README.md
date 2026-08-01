@@ -241,10 +241,21 @@ Since every other flag above is additive, `--all` is how a user gets back to
 the full list:
 
 ```bash
-$ cfgd mcp tools                   # what the CLI pins: 9 tools
-$ cfgd mcp tools --group modules   # 19
-$ cfgd mcp tools --all             # 86
+$ cfgd mcp tools                                     # what the CLI pins: 9 tools
+$ cfgd mcp tools --group modules                     # 28 — the pin, widened
+$ cfgd mcp tools --group modules --hide-group core   # 19 — modules alone
+$ cfgd mcp tools --all                               # 86
 ```
+
+Selections union, so `--group` widens the pin rather than replacing it. Hiding
+the pinned group is how you get under it — the pinned entry yields to a
+launch-line hide, which is the mirror of a `hide_*` the author pinned and an
+end user still cannot undo.
+
+That narrowing has to name what it narrows *to*. `--hide-group core` on its own
+is refused rather than emptying the selection, because an empty selection means
+"subtract from the whole tree" — a flag whose only job is removal would hand
+back the other 77 tools.
 
 `--all` discards the exposing side only. A `hide_*` the CLI's author set stays
 set, so `--all --hide-command secrets` reads the way it looks.

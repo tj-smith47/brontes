@@ -113,7 +113,8 @@ pub async fn run_with_cancel(
     cfg: Option<Config>,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let cfg = super::common::apply_selection_flags(cfg.unwrap_or_default(), matches);
+    let cfg =
+        super::common::apply_selection_flags(cfg.unwrap_or_default(), cli.get_name(), matches);
     let log_level = parse_log_level(matches);
     init_tracing(log_level.or(cfg.log_level));
 
