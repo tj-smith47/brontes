@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-01
+
 ### Fixed
 
 - A tool selection pinned in `Config` was a floor no launch line could get under. Every exposing entry unions, so `--group modules` on a CLI pinning `core` served `modules` *padded* with `core`, and `--hide-group core` — the obvious way to say "just modules" — was read as the pinned group failing to arrive and rejected. A launch-line hide now overrules a pinned exposure, so narrowing has a spelling. Only the side that yields changed: a hide the CLI's author pinned still cannot be undone from the launch line, and one author naming the same entry on both sides is still the contradiction it was. Narrowing has to name what it narrows *to* — hiding the whole pin and selecting nothing is refused rather than silently emptying the exposing sets, which would mean "subtract from the whole tree" and hand back every tool outside the pin, widening a server through a flag whose only job is removal. That refusal names both ways forward instead of reporting a selection the user never made.
@@ -141,7 +143,8 @@ Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextp
 
 - MSRV is 1.94.
 
-[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/tj-smith47/brontes/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/tj-smith47/brontes/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tj-smith47/brontes/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tj-smith47/brontes/compare/v0.4.0...v0.5.0
