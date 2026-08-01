@@ -15,6 +15,7 @@
 pub mod http;
 pub mod stdio;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -98,9 +99,18 @@ impl BrontesServer {
     /// Any error surfaced by [`crate::generate_tools`] (bad config, bad
     /// schema).
     #[doc(hidden)]
-    pub fn new(mut cli: Command, cfg: Config) -> Result<Self> {
+    pub fn new(mut cli: Command, mut cfg: Config) -> Result<Self> {
         cli.build();
         let tools = crate::command::generate_tools_with_middleware(&cli, &cfg)?;
+        // Every path a request carries is absolute, so the config answering
+        // those requests has to be keyed the same way. The walk normalizes its
+        // own copy; without this the server would keep the caller's relative
+        // keys and quietly find nothing under them.
+        if let Cow::Owned(normalized) =
+            crate::command::normalize_command_paths(&cfg, cli.get_name())
+        {
+            cfg = normalized;
+        }
         Ok(Self {
             cli: Arc::new(cli),
             cfg: Arc::new(cfg),
@@ -1147,6 +1157,23 @@ mod tests {
         let info = s.build_server_info();
         assert_eq!(info.server_info.name, "custom-name");
         assert_eq!(info.server_info.version, "9.9.9");
+    }
+
+    #[test]
+    fn a_relative_config_path_still_resolves_after_construction() {
+        // The tool walk resolves relative paths against the CLI name, but the
+        // server keeps the config to answer `tools/call` with. Holding an
+        // un-normalized copy makes every per-command setting look empty at
+        // call time — a detached command silently runs blocking, and the
+        // `tasks` capability is advertised for a task that never arrives.
+        let cfg = Config::default().task_mode_for("greet", TaskMode::Detached);
+        let s = BrontesServer::new(root(), cfg).expect("construct");
+
+        assert_eq!(
+            s.cfg.resolved_task_mode("myapp greet"),
+            TaskMode::Detached,
+            "the path a `tools/call` carries is absolute; the config must be keyed the same way"
+        );
     }
 
     #[test]

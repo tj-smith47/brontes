@@ -428,6 +428,37 @@ async fn a_blocking_command_stays_blocking_for_a_tasks_capable_client() {
 }
 
 #[tokio::test]
+async fn a_relative_path_detaches_the_same_command_an_absolute_one_does() {
+    // The root segment is optional everywhere a path is written, so
+    // `task_mode_for("deploy")` and `task_mode_for("task-cli deploy")` name the
+    // same command. The tool walk resolves its own copy of the config, which
+    // leaves the copy answering `tools/call` free to disagree: the capability
+    // is advertised off the config's values, so a mismatch here shows up as a
+    // server promising tasks and then never handing one out.
+    let cfg = Config::default()
+        .task_mode_for("deploy", TaskMode::Detached)
+        .task_poll_interval(Duration::from_millis(10))
+        .selector(Selector {
+            middleware: Some(finishing_middleware("deployed\n")),
+            ..Default::default()
+        });
+    let (client, cancel, server_task) = connect(TasksClient, cfg).await;
+
+    let task_id = call_expecting_task(&client).await;
+    let payload = poll_until(&client, &task_id, TaskStatus::Completed).await;
+    let result = completed_result(payload);
+
+    assert_eq!(result.is_error, Some(false));
+    assert!(
+        joined_text(&result).contains("deployed"),
+        "the task must settle with the command's own output, got {:?}",
+        joined_text(&result)
+    );
+
+    shutdown(client, cancel, server_task).await;
+}
+
+#[tokio::test]
 async fn the_tasks_capability_is_advertised_only_when_a_command_is_detached() {
     let (client, cancel, server_task) =
         connect(TasksClient, detached_cfg(finishing_middleware("ok\n"))).await;
