@@ -4,6 +4,35 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-01
+
+### Added
+
+- `--all` (`Config::expose_all`), the escape hatch from a tool selection the CLI pins in its own `Config`. Every other selection entry is additive — `ToolFilter` merges the launch line into the config by union — so a CLI shipping a trimmed default could only ever be widened one group at a time. `--all` discards the exposing side wholesale and starts from the full list. It discards only that side: a `hide_*` the author set stays set, and `mcp <editor> enable --all` writes the flag into the argv it registers, so the installed server serves what the install command validated.
+- `brontes::Tool` re-exports `rmcp::model::Tool`, joining the other surface re-exports. `generate_tools` hands back a `Vec<Tool>`, and naming its element type should not cost a direct `rmcp` dependency.
+
+### Fixed
+
+- `Config::task_mode_for` was inert whenever its path was written without the root segment, which 0.6.0 had just made the normal way to write one. The tool walk resolves its own copy of the config, but the server kept the caller's, so a relative key was never found under the absolute path a `tools/call` carries: the command ran blocking while `tasks` stayed advertised — the capability is decided by the config's values, which were right — leaving a server that promised a handle it never handed out. The server now normalizes at construction, so every per-command setting is keyed the way requests address it.
+
+## [0.6.0] - 2026-07-31
+
+### Changed
+
+- Relative command paths now work in every path-keyed builder on `Config` — `annotation`, `deprecate`, `description`, `description_mode_for`, `task_mode_for`, `promote_flag`, `promote_flag_as`, `flag_schema`, and `flag_type_override` — and not only in the selection surfaces 0.5.0 covered. `Selector` command matchers are the one surface that still sees the resolved path, because a closure has nothing to resolve.
+
+### Removed
+
+- The `derive` feature on the `clap` dependency, which brontes never used — it builds command trees through the builder API. Consumers who use `#[derive(Parser)]` enable it themselves and are unaffected; everyone else stops carrying `clap_derive` and its proc-macro chain.
+
+## [0.5.0] - 2026-07-31
+
+### Changed
+
+- Command selection paths no longer require the CLI's own name. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command` and for group members in `Config::group`. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
+
+## [0.4.0] - 2026-07-31
+
 ### Added
 
 - MCP protocol revision `2026-07-28` support. The revision is stateless — no `initialize`/`notifications/initialized` handshake and no `Mcp-Session-Id` — and brontes serves it end to end: `server/discover` (SEP-2575) reports the supported version set, the `tools`-only capability set, and the host CLI's identity; every result carries the `resultType` discriminator (SEP-2322); and `tools/call` over streamable HTTP validates SEP-2243 standard headers (`Mcp-Method` / `Mcp-Name`). Protocol revisions back to `2024-11-05` continue to negotiate, handshake and session id included.
@@ -13,13 +42,12 @@ All notable changes to this project are documented here. Format adapted from [Ke
 - The Tasks extension (SEP-2663, `io.modelcontextprotocol/tasks`). `Config::task_mode_for(path, TaskMode::Detached)` answers `tools/call` with a task handle instead of blocking for the length of the command, which is the difference between a wrapped `version` and a wrapped `release`: the client polls `tasks/get` for status and the final result, answers a middleware's input request with `tasks/update`, and stops the process with `tasks/cancel`. The middleware boundary is unchanged — an input request raised inside a task leaves through `tasks/get` and the chain re-enters with `input_responses` populated exactly as on a blocking retry. Detaching is never a compatibility break: a client that did not declare the extension gets the blocking result whatever the config says, and brontes advertises the `tasks` capability only when some command is actually detached. `Config::task_ttl` bounds runtime and retention (unset, the default, means no time limit), and `Config::task_poll_interval` paces clients.
 - MRTR support (SEP-2322) at the middleware boundary. A middleware returns `MiddlewareOutcome::InputRequired` to ask the client for input — under the stateless revision the only channel a server has for reaching its client — and the retry arrives with `MiddlewareCtx::input_responses` and `MiddlewareCtx::request_state` populated. brontes refuses to emit an input request a peer cannot answer (protocol older than `2026-07-28`, or elicitation requested from a client that never declared the capability), degrading to a tool error rather than a protocol-level failure.
 - W3C Trace Context propagation (SEP-414). A validated `traceparent` / `tracestate` / `baggage` from the request's `_meta` reaches the spawned CLI as `TRACEPARENT` / `TRACESTATE` / `BAGGAGE`, so a CLI's own spans join the caller's trace. Malformed values are dropped rather than forwarded, and `Config::propagate_trace_context(false)` opts out without disturbing `Config::default_env`. Middleware reads the parsed values through `MiddlewareCtx::trace_context` regardless of the setting.
-- Command groups and launch-time tool selection, for CLIs whose command tree is larger than any one job needs. A CLI's author names bundles with `Config::group(name, paths)` and `Config::group_description(name, text)`; end users then start a server carrying only part of the tool list, with `--group` / `--command` / `--tool` and the matching `--hide-group` / `--hide-command` / `--hide-tool` on `mcp start`, `mcp stream`, and `mcp tools`. `mcp tools --groups` lists what a CLI defines. The same flags on `mcp <editor> enable` are written into the `mcp start` argv the editor registers, so a selection survives the install command — and are resolved against the CLI before the config file is written, since an editor spawns its servers where nobody reads stderr and a typo would otherwise surface as an editor showing no tools. Group members and `--command` paths cover their whole subtree and match on path segments; hiding beats selecting, and a `hide_*` pinned in `Config` cannot be undone from the launch line. Every selection has to land: a name the CLI does not have, one that resolves to a real command the server would not serve anyway (deprecated, hidden, or dropped by a `Selector`), and a filter that leaves nothing at all each fail at startup naming the entry at fault, rather than serving a tool list nobody asked for. `Config::expose_group` / `expose_command` / `expose_tool` / `hide_group` / `hide_command` / `hide_tool` pin a selection programmatically, and `brontes::Group` / `brontes::ToolFilter` are the shapes behind both surfaces. A CLI whose tree is large enough to be worth trimming by default can pin one, and `--all` (`Config::expose_all`) is how an end user gets back to the whole list — every other entry is additive, so without it a shipped default could only ever be widened one group at a time. `--all` discards the exposing side only: a `hide_*` the author set stays set, and `mcp <editor> enable --all` writes the flag into the argv it registers so the installed server serves what the install command validated.
+- Command groups and launch-time tool selection, for CLIs whose command tree is larger than any one job needs. A CLI's author names bundles with `Config::group(name, paths)` and `Config::group_description(name, text)`; end users then start a server carrying only part of the tool list, with `--group` / `--command` / `--tool` and the matching `--hide-group` / `--hide-command` / `--hide-tool` on `mcp start`, `mcp stream`, and `mcp tools`. `mcp tools --groups` lists what a CLI defines. The same flags on `mcp <editor> enable` are written into the `mcp start` argv the editor registers, so a selection survives the install command — and are resolved against the CLI before the config file is written, since an editor spawns its servers where nobody reads stderr and a typo would otherwise surface as an editor showing no tools. Group members and `--command` paths cover their whole subtree and match on path segments; hiding beats selecting, and a `hide_*` pinned in `Config` cannot be undone from the launch line. Every selection has to land: a name the CLI does not have, one that resolves to a real command the server would not serve anyway (deprecated, hidden, or dropped by a `Selector`), and a filter that leaves nothing at all each fail at startup naming the entry at fault, rather than serving a tool list nobody asked for. `Config::expose_group` / `expose_command` / `expose_tool` / `hide_group` / `hide_command` / `hide_tool` pin a selection programmatically, and `brontes::Group` / `brontes::ToolFilter` are the shapes behind both surfaces.
 - `MiddlewareCtx` now also carries the request's raw `_meta` (including the progress token), the negotiated `protocol_version`, and the client's declared `client_capabilities`.
-- The `rmcp` types appearing on brontes' own surface are re-exported (`ClientCapabilities`, `ProtocolVersion`, `RequestMetaObject`, the MRTR and elicitation types), so consuming the middleware boundary needs no direct `rmcp` dependency and cannot mismatch the version brontes links. `RequestStateCodec` / `SealOptions` follow behind the `request-state` feature, for middleware that must verify an echoed `requestState`. `brontes::Tool` joins them: `generate_tools` hands back a `Vec<Tool>`, and naming that type should not cost a dependency.
+- The `rmcp` types appearing on brontes' own surface are re-exported (`ClientCapabilities`, `ProtocolVersion`, `RequestMetaObject`, the MRTR and elicitation types), so consuming the middleware boundary needs no direct `rmcp` dependency and cannot mismatch the version brontes links. `RequestStateCodec` / `SealOptions` follow behind the `request-state` feature, for middleware that must verify an echoed `requestState`.
 
 ### Fixed
 
-- `Config::task_mode_for` was inert whenever its path was written without the root segment, which the same release made the normal way to write one. The tool walk resolves its own copy of the config, but the server kept the caller's, so a relative key was never found under the absolute path a `tools/call` carries: the command ran blocking while `tasks` stayed advertised — the capability is decided by the config's values, which were right — leaving a server that promised a handle it never handed out. The server now normalizes at construction, so every per-command setting is keyed the way requests address it.
 - `clap::ArgAction::Count` flags rendered as `--flag N`, a form clap rejects outright because a `Count` arg parses with `num_args(0)` — the flag was unusable through MCP. It now renders as repetition (`--flag --flag`). The render kind is derived from the arg's action rather than from the advertised JSON Schema type, so a `Config::flag_type_override` can no longer change how a flag is executed.
 - Tool errors did not satisfy the `outputSchema` every tool advertises. A failed call now returns a conforming `ToolOutput` as `structuredContent`, with the brontes-specific detail moved to namespaced `_meta` keys.
 - Under `mcp stream`, every inbound request rebuilt the server handler and re-walked the `clap` tree. The walk is now a startup cost, paid once and shared across connections.
@@ -32,14 +60,9 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ### Changed
 
-- Command paths no longer require the CLI's own name, anywhere they are written. `--command release` and `--command "anodizer release"` name the same command, and the same holds for `--hide-command`, for group members in `Config::group`, and for every path-keyed builder on `Config` — `annotation`, `deprecate`, `description`, `description_mode_for`, `task_mode_for`, `promote_flag`, `promote_flag_as`, `flag_schema`, and `flag_type_override`. `Selector` command matchers are the one surface that still sees the resolved path, because a closure has nothing to resolve. The root is the one segment brontes can always derive — it is the binary being invoked — so requiring it was asking users to retype what they had just typed. Absolute paths keep working; a path whose first segment is the root is read as absolute, so a CLI with a subcommand named after itself addresses it by spelling the root twice.
 - `rmcp` 2.2 → 3.0, the SDK revision implementing MCP `2026-07-28`. Consumers who name `rmcp` types directly — `Config::implementation` takes an `rmcp::model::Implementation` — must move to `rmcp` 3.x in lockstep.
 - **Breaking:** `MiddlewareResult` is now `Result<MiddlewareOutcome>` rather than `Result<ToolOutput>`, so a middleware can answer with an MRTR input request instead of a finished process. `MiddlewareOutcome: From<ToolOutput>` makes the migration a trailing `.into()` on each success path; the change is a compile error at every affected site, never a silent behavior shift.
 - Tools are listed in `clap` declaration order rather than reverse. The order is a tool list's only ranking signal, so it should read the way the CLI's own `--help` does. It remains stable across calls and processes, which is what the revision asks for so clients can cache a listing.
-
-### Removed
-
-- The `derive` feature on the `clap` dependency, which brontes never used — it builds command trees through the builder API. Consumers who use `#[derive(Parser)]` enable it themselves and are unaffected; everyone else stops carrying `clap_derive` and its proc-macro chain.
 
 ## [0.3.0] - 2026-07-19
 
@@ -113,7 +136,11 @@ Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextp
 
 - MSRV is 1.94.
 
-[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/tj-smith47/brontes/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/tj-smith47/brontes/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/tj-smith47/brontes/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/tj-smith47/brontes/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tj-smith47/brontes/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/tj-smith47/brontes/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/tj-smith47/brontes/compare/v0.2.0...v0.2.1
