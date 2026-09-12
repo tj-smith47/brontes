@@ -131,7 +131,19 @@ pub fn capture_warns<R>(body: impl FnOnce() -> R) -> (R, String) {
 /// shared current-thread runtime so the subscriber is in scope for
 /// every `poll`. Tests that need a multi-threaded runtime should
 /// install the subscriber inside their own runtime block instead.
-pub async fn capture_warns_async<F, R>(body: F) -> (R, String)
+///
+/// Synchronous despite the name: the future is driven to completion via
+/// `block_on` inside the closure rather than an `.await` in this body, so
+/// it never actually suspends. Callers keep the historical `.await` at
+/// each call site by returning a future that resolves immediately.
+pub fn capture_warns_async<F, R>(body: F) -> impl std::future::Future<Output = (R, String)>
+where
+    F: std::future::Future<Output = R>,
+{
+    std::future::ready(capture_warns_sync(body))
+}
+
+fn capture_warns_sync<F, R>(body: F) -> (R, String)
 where
     F: std::future::Future<Output = R>,
 {
@@ -176,4 +188,44 @@ pub fn assert_contains_all(haystack: &str, needles: &[&str]) {
 #[must_use]
 pub fn count_occurrences(haystack: &str, needle: &str) -> usize {
     haystack.matches(needle).count()
+}
+
+/// Start a client handshake against `transport`, routed by the protocol
+/// version the client itself declares.
+///
+/// rmcp 3.2.0 keeps the `initialize` handshake on legacy versions only
+/// (rust-sdk#1228): a client asking for `2026-07-28` there is always
+/// answered with the server's newest legacy version. Negotiating the
+/// modern, stateless revision instead requires the `server/discover`
+/// lifecycle, so route each client by the version it actually wants.
+pub async fn connect_client<C, T, E, A>(
+    client: C,
+    transport: T,
+    cancel: tokio_util::sync::CancellationToken,
+) -> rmcp::service::RunningService<rmcp::service::RoleClient, C>
+where
+    C: rmcp::handler::client::ClientHandler,
+    T: rmcp::transport::IntoTransport<rmcp::service::RoleClient, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    use rmcp::model::ProtocolVersion;
+
+    if client.get_info().protocol_version.as_str() >= ProtocolVersion::V_2026_07_28.as_str() {
+        rmcp::service::serve_client_with_lifecycle_and_ct(
+            client,
+            transport,
+            rmcp::service::ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+            cancel,
+        )
+        .await
+        .expect("client start")
+    } else {
+        use rmcp::ServiceExt;
+        client
+            .serve_with_ct(transport, cancel)
+            .await
+            .expect("client start")
+    }
 }

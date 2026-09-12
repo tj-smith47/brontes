@@ -26,6 +26,8 @@ use rmcp::service::RoleClient;
 use tokio::io::duplex;
 use tokio_util::sync::CancellationToken;
 
+mod support;
+
 use brontes::__test_internal::BrontesServer;
 use brontes::{
     BoxedNext, Config, Middleware, MiddlewareCtx, MiddlewareOutcome, Selector, ToolOutput,
@@ -139,10 +141,7 @@ where
         })
     };
 
-    let client = client
-        .serve_with_ct(client_io, cancel.clone())
-        .await
-        .expect("client start");
+    let client = support::connect_client(client, client_io, cancel.clone()).await;
 
     (client, cancel, server_task)
 }
