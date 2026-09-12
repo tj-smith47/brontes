@@ -95,6 +95,28 @@ fn tools_list_body(id: u64) -> String {
     format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/list"}}"#)
 }
 
+/// Stateless `_meta` for a plain `2026-07-28` client with no extensions,
+/// which rmcp 3.2 requires on every non-`initialize` request once the
+/// negotiated version reaches `2026-07-28` (rust-sdk#1089/#1091).
+fn stateless_client_meta() -> serde_json::Value {
+    serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
+}
+
+/// A `tools/list` body carrying the `_meta` the stateless `2026-07-28` path
+/// requires.
+fn stateless_tools_list_body(id: u64) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/list",
+        "params": { "_meta": stateless_client_meta() },
+    })
+    .to_string()
+}
+
 /// Build a `notifications/initialized` JSON-RPC notification body
 /// (no id; the MCP spec requires this after the initialize response).
 const fn initialized_notification() -> &'static str {
@@ -222,7 +244,7 @@ async fn http_2026_07_28_tools_list_needs_no_handshake_or_session() {
         .header("Accept", "application/json, text/event-stream")
         .header("MCP-Protocol-Version", "2026-07-28")
         .header("Mcp-Method", "tools/list")
-        .body(tools_list_body(1))
+        .body(stateless_tools_list_body(1))
         .send()
         .await
         .expect("stateless tools/list send");
@@ -292,7 +314,7 @@ async fn http_2026_07_28_rejects_a_mismatched_standard_header() {
         .header("Accept", "application/json, text/event-stream")
         .header("MCP-Protocol-Version", "2026-07-28")
         .header("Mcp-Method", "tools/call")
-        .body(tools_list_body(1))
+        .body(stateless_tools_list_body(1))
         .send()
         .await
         .expect("mismatched header send");
@@ -321,6 +343,7 @@ fn promoted_call_body(region: &str) -> String {
         "params": {
             "name": "brontes-http-smoke_greet",
             "arguments": { "region": region },
+            "_meta": stateless_client_meta(),
         },
     })
     .to_string()
