@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-12
+
+### Others
+
+* 6683096f3fed bump the cargo group across 1 directory with 9 updates (dependabot[bot])
+* 9f65c8797918 negotiate 2026-07-28 via discover, not the legacy handshake (TJ Smith)
+
 ## [0.7.1] - 2026-08-01
 
 ### Fixed
@@ -143,7 +150,8 @@ Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextp
 
 - MSRV is 1.94.
 
-[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/tj-smith47/brontes/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/tj-smith47/brontes/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/tj-smith47/brontes/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tj-smith47/brontes/compare/v0.5.0...v0.6.0
