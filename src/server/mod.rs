@@ -177,6 +177,10 @@ impl ServerHandler for BrontesServer {
     /// list — supported versions, `tools`-only capabilities, and the host
     /// CLI's identity are all fixed at construction — so it carries the
     /// same hints as `tools/list`.
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "rmcp declares the handler method async and this arm answers without awaiting"
+    )]
     async fn discover(
         &self,
         _context: RequestContext<RoleServer>,
@@ -189,6 +193,10 @@ impl ServerHandler for BrontesServer {
         .with_cache_scope(self.cfg.resolved_cache_scope()))
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "rmcp declares the handler method async and this arm answers without awaiting"
+    )]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -311,6 +319,10 @@ impl ServerHandler for BrontesServer {
         self.find_tool(name)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "rmcp declares the handler method async and this arm answers without awaiting"
+    )]
     async fn get_task(
         &self,
         request: GetTaskParams,
@@ -319,6 +331,10 @@ impl ServerHandler for BrontesServer {
         Ok(GetTaskResult::new(self.tasks.get_task(&request.task_id)?))
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "rmcp declares the handler method async and this arm answers without awaiting"
+    )]
     async fn update_task(
         &self,
         request: UpdateTaskParams,
@@ -328,6 +344,10 @@ impl ServerHandler for BrontesServer {
             .update_task(&request.task_id, request.input_responses)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "rmcp declares the handler method async and this arm answers without awaiting"
+    )]
     async fn cancel_task(
         &self,
         request: CancelTaskParams,

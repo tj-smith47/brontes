@@ -70,6 +70,10 @@ impl rmcp::handler::client::ClientHandler for ElicitingClient {
         .with_protocol_version(ProtocolVersion::V_2026_07_28)
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "rmcp declares the handler method async and this fake answers without awaiting"
+    )]
     async fn create_elicitation(
         &self,
         request: ElicitRequestParams,
