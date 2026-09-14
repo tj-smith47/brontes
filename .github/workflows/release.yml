@@ -18,8 +18,41 @@ env:
   ANODIZER_VERSION: ${{ vars.ANODIZER_VERSION }}
 
 jobs:
+  # `anodizer preflight` runs the whole pre-release check once, before the
+  # publish job touches anything: the environment half (required tools,
+  # secrets, endpoint reachability, parseable key material), a credential
+  # probe against every configured publisher, and a reconcile sweep that asks
+  # crates.io whether the tagged version already exists. The tag is already
+  # pushed when this workflow fires (ci.yml `tag --push-tags-only`), so the
+  # version under test is the one HEAD carries. The release job passes
+  # `--skip=preflight` because this job is the one run of that engine.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The runtime injects ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN only into jobs
+      # that can mint OIDC tokens; the cargo publisher is `auth: oidc` (crates.io
+      # Trusted Publishing) and `signs:` is keyless cosign, so the probe needs
+      # the same grant the release job holds.
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # tag history: preflight derives the version from the tag at HEAD
+
+      - name: Run anodizer preflight
+        uses: tj-smith47/anodizer-action@v1
+        with:
+          version: ${{ env.ANODIZER_VERSION }}
+          args: preflight
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
   release:
     name: Publish Release
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
       contents: write  # GH release creation
@@ -43,11 +76,13 @@ jobs:
       # Publishing) — the `id-token: write` grant above makes that token
       # ambient. There is no CARGO_REGISTRY_TOKEN fallback: a missing or
       # unregistered Trusted Publisher fails the release loudly.
+      # --skip preflight: the `preflight` job above already ran the whole check
+      # (environment, credential probes, reconcile).
       - name: Run anodizer release
         uses: tj-smith47/anodizer-action@v1
         with:
           version: ${{ env.ANODIZER_VERSION }}
-          args: release --clean
+          args: release --clean --skip preflight
           auto-install: true
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
