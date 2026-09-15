@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re-)publish, e.g. v0.7.3. Runs this workflow file as it stands on the dispatched ref against that tag's tree."
+        required: true
 
 # Read-only at the workflow level; each job elevates to exactly what it writes.
 permissions:
@@ -40,12 +45,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0  # tag history: preflight derives the version from the tag at HEAD
 
+      # `install:` rather than `auto-install:`: this job runs no pipeline, and
+      # the environment half of the preflight checks that every tool the
+      # configured stages need is on PATH (cosign for `signs:`, syft for the
+      # SBOM). ubuntu-latest ships neither.
       - name: Run anodizer preflight
         uses: tj-smith47/anodizer-action@v1
         with:
           version: ${{ env.ANODIZER_VERSION }}
+          install: cosign,syft
           args: preflight
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
@@ -61,6 +72,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0  # tag history + previous-tag lookup for changelog
 
       - name: Set up Rust toolchain
@@ -91,9 +103,10 @@ jobs:
   # pointing at the local version-sync bump commit, leaving master unmoved.
   # Advance master onto that bump commit ONLY after the publish succeeds, so a
   # failed release never advances the branch (matches anodizer's advance-master).
-  # `github.sha` on a tag-push is the commit the tag references = the bump commit;
-  # `force=false` makes the GitHub API reject anything but a fast-forward, so the
-  # branch moves only when master is a strict ancestor of the bump commit.
+  # The commit the tag references is the bump commit; `force=false` makes the
+  # GitHub API reject anything but a fast-forward, so the branch moves only
+  # when master is a strict ancestor of it, and a master that already holds
+  # it (a re-publish after a hand reconcile) is left alone.
   advance-master:
     name: Advance master
     needs: [release]
@@ -103,13 +116,25 @@ jobs:
     permissions:
       contents: write  # fast-forward the master ref onto the bump commit
     steps:
+      # The bump commit is the one the tag points at, which on a dispatched
+      # re-publish is not `github.sha`.
+      - name: Check out the released tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
       - name: Fast-forward master onto the published bump commit
         env:
           # GH_PAT (not GITHUB_TOKEN): moving brontes' protected master ref
           # requires the same credential the tag push uses in ci.yml.
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          SHA: ${{ github.sha }}
         run: |
+          SHA="$(git rev-parse HEAD)"
+          if git merge-base --is-ancestor "$SHA" origin/master; then
+            echo "master already contains $SHA; nothing to advance"
+            exit 0
+          fi
           if ! gh api -X PATCH "repos/${{ github.repository }}/git/refs/heads/master" \
                  -f sha="$SHA" -F force=false; then
             echo "::error::Could not fast-forward master to $SHA (master moved during release?). \
