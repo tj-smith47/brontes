@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-15
+
+### Bug Fixes
+
+* 7ab510d74cfb update rustls to 0.23.45 for RUSTSEC-2026-0285 (TJ Smith)
+
+---
+### Others
+
+* 19bc523628d2 bump dirs to 7 and uuid to 1.26.1 (TJ Smith)
+* 5c39ad322c03 build with the stable toolchain locally, matching CI and the sibling repos (TJ Smith)
+
 ## [0.7.2] - 2026-09-12
 
 ### Others
@@ -151,6 +163,7 @@ Initial release. brontes transforms `clap` CLIs into [MCP](https://modelcontextp
 - MSRV is 1.94.
 
 [Unreleased]: https://github.com/tj-smith47/brontes/compare/v0.7.2...HEAD
+[0.7.3]: https://github.com/tj-smith47/brontes/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/tj-smith47/brontes/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/tj-smith47/brontes/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/tj-smith47/brontes/compare/v0.6.0...v0.7.0
