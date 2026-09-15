@@ -242,6 +242,6 @@ jobs:
         uses: tj-smith47/anodizer-action@v1
         with:
           version: ${{ env.ANODIZER_VERSION }}
-          args: tag --push-tags-only --crate brontes
+          args: tag --changelog --push-tags-only --crate brontes
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
