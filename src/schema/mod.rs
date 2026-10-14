@@ -1,4 +1,4 @@
-//! JSON Schema generation for the MCP tool surface.
+//! JSON Schema generation for MCP tools.
 //!
 //! The cache module holds the base schemas for `ToolInput` and `ToolOutput`;
 //! the types module exposes [`SchemaType`] for coarse flag-type classification
@@ -7,7 +7,7 @@
 //! The orchestrator functions at the module root ([`build_input_schema_with_matchers`],
 //! [`build_output_schema`], [`build_description`]) tie the sub-modules
 //! together into per-tool schemas and description strings ready for the MCP
-//! tool surface.
+//! tool list.
 
 // `args` is crate-internal — the orchestrator consumes it to build
 // the `args` property description for per-tool input schemas.
@@ -33,7 +33,7 @@ use serde_json::Value;
 use crate::config::Config;
 use crate::selector::FlagMatcher;
 
-/// One command's input surface: what clients are told, and what brontes needs
+/// One command's input definition: what clients are told, and what brontes needs
 /// when a call on it arrives.
 #[derive(Debug)]
 pub struct InputSurface {
@@ -127,7 +127,7 @@ pub fn build_input_schema_with_matchers(
 ///
 /// The `ToolOutput` shape (`stdout` / `stderr` / `exit_code`) does not vary
 /// per command; this function shares the single cached [`Arc`] allocation
-/// across every tool (via `Arc::clone`), rather than allocating fresh.
+/// across every tool (via `Arc::clone`), so no new allocation is made.
 pub fn build_output_schema() -> Arc<JsonObject> {
     // Output shape is invariant per tool — share the single cached
     // Arc allocation across every Tool's output_schema field.

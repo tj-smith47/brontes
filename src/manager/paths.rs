@@ -7,7 +7,7 @@
 //!
 //! Cursor and `VSCode` layer their own resolvers next to
 //! [`claude_config_path`] following the same `cfg`-gated shape; the trait of
-//! "primary path + fallback when home resolution fails" is the surface area
+//! "primary path + fallback when home resolution fails" is the behavior
 //! every editor shares. `VSCode` and Cursor on Linux do NOT consult
 //! `XDG_CONFIG_HOME` — that is Claude-only behavior.
 
@@ -408,7 +408,7 @@ fn vscode_workspace_path_from(cwd: Option<&std::path::Path>) -> PathBuf {
 /// Default Zed user-mode `settings.json` path for the current platform.
 ///
 /// macOS: `$HOME_DIR/.config/zed/settings.json` (Zed on macOS follows the
-/// XDG-style `~/.config/zed/` layout rather than `Library/Application
+/// XDG-style `~/.config/zed/` layout and does not use `Library/Application
 /// Support`), falling back to `/Users/$USER/.config/zed/settings.json`
 /// when `dirs::home_dir()` returns `None`.
 ///
@@ -506,9 +506,9 @@ fn zed_config_path_linux_from(
 ///
 /// Prefers `%APPDATA%\Zed\settings.json`, falls back to
 /// `%USERPROFILE%\AppData\Roaming\Zed\settings.json`. No `C:\Users\Default`
-/// literal — Zed's Windows layout does not document that fallback, so we
-/// surface a relative path (matching the Cursor/`VSCode` pattern) rather
-/// than invent one.
+/// literal — Zed's Windows layout does not document that fallback, so the
+/// function returns a relative path (matching the Cursor/`VSCode` pattern)
+/// and does not invent one.
 #[cfg(any(target_os = "windows", test))]
 fn zed_config_path_windows_from(appdata: Option<&str>, userprofile: Option<&str>) -> PathBuf {
     if let Some(v) = appdata.filter(|s| !s.is_empty()) {

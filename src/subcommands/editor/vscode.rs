@@ -1,4 +1,4 @@
-//! `mcp vscode {enable, disable, list}` clap surface and dispatch.
+//! `mcp vscode {enable, disable, list}` clap commands and dispatch.
 //!
 //! Mirrors ophis `internal/cfgmgr/cmd/vscode/{root,enable,disable,list}.go`
 //! with the following divergences:
@@ -19,9 +19,9 @@
 //!
 //! The `vscode` group's `long_about` uses the FULL form
 //! `"Visual Studio Code"`; every `vscode` leaf's `long_about` uses the
-//! abbreviation `"VSCode"`. This asymmetry is pinned verbatim from ophis;
+//! abbreviation `"VSCode"`. This asymmetry is copied verbatim from ophis;
 //! the inline test `group_long_uses_full_visual_studio_code_form` locks
-//! the surface against future "normalization" drift.
+//! the text against future "normalization" drift.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
@@ -35,12 +35,12 @@ use super::{arg_config_path, arg_env, arg_log_level, arg_server_name, merge_env}
 /// Build the `--workspace` clap argument used by all three `VSCode` leaves.
 ///
 /// Flag-only (no value). When present, the editor's config path resolves
-/// to `$CWD/.vscode/mcp.json` instead of the per-OS user-mode default.
-/// `--config-path` always wins over both.
+/// to `$CWD/.vscode/mcp.json`; when absent, it uses the per-OS user-mode
+/// default. `--config-path` always wins over both.
 fn arg_workspace() -> Arg {
     Arg::new("workspace")
         .long("workspace")
-        .help("Use the workspace config ($CWD/.vscode/mcp.json) instead of the user config")
+        .help("Use the workspace config ($CWD/.vscode/mcp.json); the user config is left unchanged")
         .action(ArgAction::SetTrue)
 }
 

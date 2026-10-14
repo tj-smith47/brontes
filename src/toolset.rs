@@ -6,7 +6,7 @@
 //! choosing among five. The two halves of the answer live here:
 //!
 //! - the **developer** names bundles of related commands with [`Group`], so
-//!   the useful subsets have names instead of having to be spelled out;
+//!   the useful subsets have names and need not be spelled out each time;
 //! - the **end user** picks what a given server exposes with [`ToolFilter`],
 //!   driven by `--group` / `--command` / `--tool` (and their `--hide-`
 //!   counterparts) on `mcp start`, `mcp stream`, and `mcp tools`.
@@ -41,14 +41,15 @@ use std::collections::{BTreeMap, BTreeSet};
 /// A named bundle of commands, defined by the CLI's author.
 ///
 /// Membership covers a command and everything under it: naming `"release"`
-/// also takes `"release notes"`. That way the group tracks the command tree
-/// instead of drifting from it whenever a subcommand is added.
+/// also takes `"release notes"`. That way the group follows the command tree
+/// as subcommands are added.
 ///
 /// Paths are written relative to the CLI's own name, which brontes supplies —
 /// `"release"` and `"anodizer release"` name the same command.
 ///
 /// Construct through [`crate::Config::group`] and
-/// [`crate::Config::group_description`] rather than by struct literal.
+/// [`crate::Config::group_description`]. The type is `#[non_exhaustive]`, so
+/// code outside brontes cannot build it with a struct literal.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Group {
@@ -58,7 +59,7 @@ pub struct Group {
     pub description: Option<String>,
 }
 
-/// Which of the walked commands a server exposes as tools.
+/// Which commands from the command tree a server exposes as tools.
 ///
 /// Empty — the default — means every command that survives the safety filters
 /// and the [`Selector`](crate::Selector) pass. Otherwise:
@@ -73,7 +74,7 @@ pub struct Group {
 /// "release notes"` reads the way it looks.
 ///
 /// Every name, exposed or hidden, has to be one the CLI actually has; a typo
-/// is a startup error rather than a silent no-op. Exposing entries are held to
+/// is reported as a startup error. Exposing entries are held to
 /// more: one that resolves to a real command the server would not serve anyway
 /// — deprecated, hidden, or dropped by a [`Selector`](crate::Selector) — also
 /// fails, because a server quietly missing a tool the caller asked for is
@@ -97,7 +98,7 @@ pub struct ToolFilter {
     /// Discard the exposing sets and serve every command that survives the
     /// hiding sets.
     ///
-    /// The way back out of an exposure a CLI's author pinned in
+    /// The way back out of an exposure a CLI's author set in
     /// [`Config`](crate::Config): every other entry here is additive, so
     /// without this a shipped default could only ever be widened one group at
     /// a time. Hiding is unaffected — a command the author removed for a
@@ -109,7 +110,8 @@ impl ToolFilter {
     /// Whether this filter would change anything.
     ///
     /// A no-op filter skips the "selected nothing" check entirely: a CLI with
-    /// no commands is its own (already-reported) problem, not a trim failure.
+    /// no commands is its own (already-reported) problem and is not reported
+    /// again as a trim failure.
     ///
     /// [`ToolFilter::expose_all`] is deliberately not consulted: on its own it
     /// asks for the untrimmed list, which is what an empty filter already
@@ -127,10 +129,9 @@ impl ToolFilter {
 
     /// Whether any of the three exposing sets is populated.
     ///
-    /// When none is, the filter subtracts from the full tool list instead of
-    /// building up from an empty one. [`ToolFilter::expose_all`] forces that
-    /// subtracting form, which is what makes it an escape hatch rather than
-    /// one more thing to union.
+    /// When none is, the filter starts from the full tool list and subtracts
+    /// from it. [`ToolFilter::expose_all`] forces that subtracting form, which
+    /// is what makes it an escape hatch: it discards the exposing sets.
     #[must_use]
     pub fn selects(&self) -> bool {
         if self.expose_all {
@@ -142,27 +143,27 @@ impl ToolFilter {
     /// Merge `other`'s entries into this filter.
     ///
     /// Used to fold the CLI flags parsed at launch onto whatever the CLI's
-    /// author already pinned in [`Config`](crate::Config), so a developer
-    /// default and an end-user choice compose rather than one silently
-    /// replacing the other.
+    /// author already set in [`Config`](crate::Config), so a developer
+    /// default and an end-user choice compose. Neither silently replaces the
+    /// other.
     ///
     /// When `other` names a selection of its own, an exposing entry on this
-    /// side that `other` also hides is dropped rather than merged. The
-    /// exposing sets union, so a pinned default is otherwise a floor no launch
-    /// line can get under: `--group x` on a CLI pinning `y` serves `x` padded
-    /// with `y`, and `--hide-group y` — the obvious way to say "just x" —
+    /// side that `other` also hides is dropped from the merge. The exposing
+    /// sets union, so without this rule an author's default is a minimum no
+    /// launch line can go below: `--group x` on a CLI that sets `y` serves `x`
+    /// padded with `y`, and `--hide-group y` — the obvious way to say "just x" —
     /// would be read as `y` failing to arrive and rejected. This is the mirror
-    /// of a hide pinned in [`Config`](crate::Config), which an end user still
+    /// of a hide set in [`Config`](crate::Config), which an end user still
     /// cannot undo; only the side that yields changes. Both sides naming the
-    /// same entry stays an error, because there it is one author contradicting
-    /// themselves rather than two composing.
+    /// same entry stays an error, because there a single author contradicts
+    /// themselves and there is nothing to compose.
     ///
     /// The drop only holds while something is still exposed afterwards. An
     /// empty exposing set means "subtract from the whole tree", so a launch
     /// line that hid every exposed entry and named no replacement would be
-    /// handed every tool outside the pin — a flag whose whole job is removal
-    /// widening the server. Kept instead, the pin fails the arrival check and
-    /// names what the launch line collided with.
+    /// handed every tool outside the author's default — a flag whose whole job
+    /// is removal widening the server. When the entry is kept, it fails the
+    /// arrival check and names what the launch line collided with.
     #[must_use]
     pub fn merged_with(mut self, other: &Self) -> Self {
         let mut narrowed = self.clone();
@@ -266,7 +267,7 @@ impl ToolFilter {
 ///
 /// Matching is on whole path segments, so `"anodizer rel"` does not cover
 /// `"anodizer release"` — a near-miss in a launch flag has to fail loudly
-/// rather than quietly select a neighbour.
+/// and must never quietly select a neighbour.
 pub fn covers(entry: &str, path: &str) -> bool {
     path == entry
         || path
@@ -287,8 +288,8 @@ pub fn covers(entry: &str, path: &str) -> bool {
 /// spelled twice (`"anodizer anodizer"`), since the leading segment is read
 /// as the root first.
 /// Only a well-formed path is resolved. One carrying stray whitespace is
-/// returned untouched, so the error that follows names what the caller wrote
-/// rather than a resolved form they never typed.
+/// returned untouched, so the error that follows names exactly what the
+/// caller wrote.
 pub fn absolute(entry: &str, root: &str) -> String {
     let malformed = entry.is_empty() || entry != entry.trim() || entry.contains("  ");
     if malformed || covers(root, entry) {

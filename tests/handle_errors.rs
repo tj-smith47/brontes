@@ -8,7 +8,7 @@
 //!
 //! - Explicit-empty `Config::command_name` — caught BEFORE the lookup.
 //! - The configured group is missing from the CLI (forgot to mount).
-//! - The configured group exists but was not minted by brontes (sibling
+//! - The configured group exists but was not created by brontes (sibling
 //!   collision with a same-named user subcommand).
 //! - The dispatched leaf is the hidden internal marker.
 //! - The dispatched leaf is some unknown name.
@@ -96,7 +96,7 @@ fn handle_rejects_sibling_collision_with_user_owned_mcp_subcommand() {
     let err = result.expect_err("must reject sibling collision");
     let msg = err.to_string();
     assert!(
-        msg.contains("not minted by brontes") && msg.contains("sibling collision"),
+        msg.contains("not created by brontes") && msg.contains("sibling collision"),
         "got: {msg}"
     );
 }

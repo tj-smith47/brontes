@@ -17,7 +17,7 @@
 //! # Introspectability cooperation
 //!
 //! The tool-validation layer (responsible for checking that every `cmd_path`
-//! named in a [`crate::Config`] actually exists in the walked command tree)
+//! named in a [`crate::Config`] actually exists in the traversed command tree)
 //! cannot peer inside an opaque `Arc<dyn Fn>`. The built-in factories
 //! cooperate by registering the strings they capture in a process-global
 //! side-table keyed by the `Arc`'s data-pointer identity. The validator can
@@ -494,14 +494,14 @@ mod tests {
     /// returns `None`. The allocator is free to (and frequently does)
     /// place the hand-written closure on a slot that was occupied by a
     /// just-dropped factory closure; the liveness check must catch that
-    /// case and evict the stale entry rather than misreport the
-    /// hand-written closure as carrying a factory spec.
+    /// case and evict the stale entry, so the hand-written closure is
+    /// never misreported as carrying a factory spec.
     ///
     /// The test cannot *force* pointer reuse to happen on any given run
     /// (the allocator is opaque), but it heavily encourages it by
     /// allocating and freeing in a tight loop. Combined with running the
     /// surrounding test suite many times under thread interleaving, this
-    /// pins the regression.
+    /// guards against the regression.
     #[test]
     fn dropped_factory_arc_does_not_alias_hand_written_closure() {
         for _ in 0..1024 {
@@ -519,8 +519,8 @@ mod tests {
     }
 
     /// Verifies a live `Arc`'s registry entry survives unrelated
-    /// allocator churn — eviction must only fire on stale keys, not on
-    /// collateral collisions.
+    /// allocator churn — eviction must fire only on stale keys. A
+    /// collateral collision leaves the entry in place.
     #[test]
     fn live_arc_survives_intermediate_factory_churn() {
         let m = allow_cmds(["sticky"]);

@@ -43,11 +43,11 @@ use crate::Result;
 use crate::config::Config;
 use crate::server::BrontesServer;
 
-/// Grace window for in-flight HTTP connections to drain after the
+/// Grace window for in-flight HTTP connections to finish after the
 /// cancellation token fires. Matches ophis `config.go:101-110`.
 ///
 /// Production callers (the `mcp stream` subcommand) pass this value to
-/// [`serve_http_with`] verbatim; the `__test_internal` surface accepts
+/// [`serve_http_with`] verbatim; the `__test_internal` API accepts
 /// an override so the warn-fire test crate can compress the grace
 /// window without waiting five real seconds.
 // `pub` (not `pub(crate)`) so the `__test_internal` re-export in
@@ -131,14 +131,14 @@ pub async fn bind_default_acceptor(addr: SocketAddr) -> Result<TokioTcpAcceptor>
 /// Binds a TCP listener at `addr`, wraps the host CLI in
 /// `StreamableHttpService`, and accepts hyper HTTP/1.1 connections until
 /// `cancel` fires. After cancellation, in-flight connections get up to
-/// [`SHUTDOWN_GRACE`] (5 seconds) to drain; any still-pending join handles
+/// [`SHUTDOWN_GRACE`] (5 seconds) to finish; any still-pending join handles
 /// are abandoned and the function returns.
 ///
-/// The clap tree is walked once, before the accept loop starts: every
+/// The clap tree is traversed once, before the accept loop starts. Every
 /// session is handed a clone of that one handler, so schema and config
-/// errors surface at startup rather than on the first inbound request, and
-/// a task created by one request is still there for the `tasks/get` that
-/// follows it.
+/// errors are reported at startup, before any request arrives, and a task
+/// created by one request is still there for the `tasks/get` that follows
+/// it.
 ///
 /// This is the production entry point; internally it delegates to
 /// [`serve_http_with`] after binding a [`TokioTcpAcceptor`] at `addr`.
@@ -147,7 +147,7 @@ pub async fn bind_default_acceptor(addr: SocketAddr) -> Result<TokioTcpAcceptor>
 ///
 /// # Errors
 ///
-/// - [`crate::Error::Config`] when [`BrontesServer::new`] surfaces a
+/// - [`crate::Error::Config`] when [`BrontesServer::new`] returns a
 ///   schema/config error at startup.
 /// - [`crate::Error::Io`] when the TCP listener cannot bind.
 // `pub` (not `pub(crate)`) so the `__test_internal` re-export in
@@ -188,9 +188,9 @@ pub async fn serve_http(
 /// `connections did not drain within ...`) can be exercised without
 /// waiting five real seconds or breaking a live TCP listener.
 ///
-/// Takes an already-built handler rather than a `(cli, cfg)` pair: the walk
-/// has to happen before the caller can honestly report a listening server, so
-/// the construction belongs upstream of the bind.
+/// Takes an already-built handler; it does not accept a `(cli, cfg)` pair. The
+/// command-tree traversal has to happen before the caller can honestly report
+/// a listening server, so the construction belongs upstream of the bind.
 ///
 /// # Errors
 ///

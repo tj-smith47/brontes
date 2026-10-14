@@ -70,8 +70,7 @@ impl ToolAnnotations {
     /// attach to the tool.  Returns `Some(_)` as soon as at least one
     /// field carries a value; the resulting rmcp struct holds exactly
     /// the fields that were provided, forwarding `Some(false)` explicitly
-    /// so that an explicit `false` appears on the wire rather than being
-    /// omitted.
+    /// so that an explicit `false` appears on the wire.
     #[must_use]
     pub fn to_rmcp(&self) -> Option<rmcp::model::ToolAnnotations> {
         let any_set = self.title.is_some()

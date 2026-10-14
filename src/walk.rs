@@ -10,7 +10,7 @@ use clap::Command;
 
 use crate::config::Config;
 
-/// A clap command with the path brontes derives by walking from the root.
+/// A clap command with the path brontes derives by traversing from the root.
 ///
 /// Consumed by `generate_tools` to apply selectors and assemble the MCP tool
 /// list.
@@ -22,7 +22,7 @@ pub struct ResolvedCmd<'a> {
     pub path: String,
 }
 
-/// Walk the clap tree depth-first, producing a flat `Vec` of resolved
+/// Traverse the clap tree depth-first, producing a flat `Vec` of resolved
 /// entries. The root command is included as the first entry.
 ///
 /// Subcommands are visited in registration order, so the tool list reads the

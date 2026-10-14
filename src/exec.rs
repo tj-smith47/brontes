@@ -29,7 +29,7 @@
 //! [`Error::Spawn`]. A subprocess that runs and exits non-zero returns a
 //! successful [`ToolOutput`] with the captured streams and the non-zero
 //! `exit_code`; the call is **not** an error from brontes's perspective —
-//! the MCP layer surfaces the failure to the client via `is_error: true`.
+//! the MCP layer reports the failure to the client via `is_error: true`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -92,7 +92,7 @@ pub fn current_executable() -> Result<PathBuf> {
 /// path. Flags are appended next, then positional args.
 ///
 /// `flag_specs` carries what the JSON value cannot express — chiefly that an
-/// `ArgAction::Count` flag renders as repetition rather than `--flag N`. A flag
+/// `ArgAction::Count` flag renders as the flag repeated N times. A flag
 /// absent from the map falls back to value/boolean rendering inferred from its
 /// JSON type.
 ///
@@ -172,8 +172,8 @@ fn append_flag(
 ///
 /// clap parses a `Count` arg with `num_args(0)`, so the `--name N` form the
 /// generic scalar path would emit is rejected as an unexpected argument. A
-/// non-integer or negative value is dropped with a warning rather than
-/// guessed at.
+/// non-integer or negative value is dropped with a warning; brontes does
+/// not guess a count.
 fn append_count_flag(out: &mut Vec<String>, name: &str, value: &Value, tool_name: &str) {
     let Some(times) = value.as_u64() else {
         tracing::warn!(
@@ -337,7 +337,7 @@ pub async fn run_tool(
     }
 }
 
-/// Drain an async byte stream into a `Vec<u8>` capped at
+/// Read an async byte stream to the end into a `Vec<u8>` capped at
 /// [`OUTPUT_CAP_BYTES`].
 ///
 /// Reads in fixed-size chunks; once the buffer reaches the cap, the
@@ -553,7 +553,7 @@ mod tests {
     fn build_args_with_root_only_is_empty() {
         let input = ToolInput::default();
         let argv = build_command_args("myapp", &input, &BTreeMap::new());
-        assert!(argv.is_empty());
+        assert_eq!(argv, Vec::<String>::new());
     }
 
     #[test]

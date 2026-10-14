@@ -139,7 +139,7 @@ pub enum TaskMode {
 /// the fluent builder methods on this type — never via struct-literal syntax
 /// (`Config { .. }`) from outside this crate. New fields may be added in
 /// minor releases without bumping the major version; the builder methods are
-/// the stable surface.
+/// the stable API.
 #[derive(Default, Clone)]
 #[non_exhaustive]
 pub struct Config {
@@ -169,7 +169,8 @@ pub struct Config {
     /// Per-call `env` overrides (set by the MCP client at invocation time) win
     /// on key conflict.  An empty merged map (no default entries AND no per-call
     /// entries) is expected to be omitted from the MCP wire payload — that
-    /// omission is enforced by the tool-call builder, not by `Config` itself.
+    /// omission is enforced by the tool-call builder; `Config` itself does not
+    /// enforce it.
     pub default_env: HashMap<String, String>,
 
     /// Per-command MCP annotation hints, keyed by full command path
@@ -201,7 +202,7 @@ pub struct Config {
     /// carrying SEP-2243's `x-mcp-header`, keyed by `(command_path,
     /// flag_name)` with the header suffix as the value.
     ///
-    /// Ordered rather than hashed so a configuration error names the same
+    /// Kept in key order so a configuration error names the same
     /// offending flag on every run. Set through [`Config::promote_flag`] or
     /// [`Config::promote_flag_as`].
     pub promoted_flags: BTreeMap<(String, String), String>,
@@ -212,7 +213,7 @@ pub struct Config {
     /// flag on `mcp start` / `mcp stream` / `mcp tools` wins over this value.
     pub log_level: Option<Level>,
 
-    /// MCP `Implementation` identity (server name and version) surfaced to MCP
+    /// MCP `Implementation` identity (server name and version) reported to MCP
     /// clients.
     ///
     /// `None` uses [`rmcp::model::Implementation::default()`], which derives
@@ -236,7 +237,7 @@ pub struct Config {
     ///
     /// When set, the stored text replaces the entire MCP tool description —
     /// the `long_about`/`about`/`after_help` cascade is bypassed for that
-    /// command.  Use this to surface LLM-specific guidance that doesn't
+    /// command.  Use this to give LLM-specific guidance that doesn't
     /// belong in the CLI's `--help` output.
     pub descriptions: HashMap<String, String>,
 
@@ -268,7 +269,7 @@ pub struct Config {
     /// Per-command [`TaskMode`] overrides, keyed by full command path.
     ///
     /// Takes precedence over [`Config::task_mode`].  Paths that match no
-    /// walked command are rejected by `generate_tools`.
+    /// command in the tree are rejected by `generate_tools`.
     pub task_modes: HashMap<String, TaskMode>,
 
     /// How long a detached task may run, and how long its record survives
@@ -291,7 +292,7 @@ pub struct Config {
     /// Set through [`Config::group`] / [`Config::group_description`].
     pub groups: BTreeMap<String, Group>,
 
-    /// Which of the walked commands this server exposes.
+    /// Which commands from the command tree this server exposes.
     ///
     /// Empty by default (every command becomes a tool). The `--group` /
     /// `--command` / `--tool` flags on `mcp start`, `mcp stream`, and
@@ -303,7 +304,7 @@ pub struct Config {
 impl Config {
     /// Default freshness hint for cacheable results: five minutes.
     ///
-    /// A brontes tool list is walked once at server construction from an
+    /// A brontes tool list is built once at server construction from an
     /// immutable clap tree, so it cannot change while the server runs — a
     /// non-zero TTL is always honest.  Five minutes is short enough that a
     /// consumer who rebuilds and restarts their CLI sees the new tool list
@@ -312,8 +313,8 @@ impl Config {
 
     /// Default cache scope for cacheable results: [`CacheScope::Public`].
     ///
-    /// `Public` is accurate rather than optimistic: [`Config`] is frozen when
-    /// the server is constructed and the walk depends on nothing per-client,
+    /// `Public` is accurate: [`Config`] is frozen when the server is
+    /// constructed and the command-tree traversal depends on nothing per-client,
     /// so every client of a given brontes server receives a byte-identical
     /// tool list.  A shared intermediary therefore cannot serve one client's
     /// list to another client and be wrong.  Any future feature that varies
@@ -365,7 +366,7 @@ impl Config {
     /// A per-command entry wins over the global default. The lookup is exact
     /// against the keys as written, so query it the way you wrote them;
     /// brontes resolves relative and absolute spellings onto each other when
-    /// it builds the tool list, not here.
+    /// it builds the tool list; this lookup does not.
     #[must_use]
     pub fn resolved_task_mode(&self, cmd_path: &str) -> TaskMode {
         self.task_modes
@@ -523,7 +524,7 @@ impl Config {
     ///
     /// One key does not belong here: SEP-2243's `x-mcp-header` is honored only
     /// on top-level properties of a tool's input schema, and a `flag_schemas`
-    /// entry always lands nested under `flags`.  Use [`Config::promote_flag`],
+    /// entry is always nested under `flags`.  Use [`Config::promote_flag`],
     /// which hoists the flag to the top level where the annotation works; a
     /// schema carrying the key directly logs a warning from `generate_tools`.
     ///
@@ -604,8 +605,8 @@ impl Config {
     ///
     /// # Requirements
     ///
-    /// Enforced by `generate_tools`, which fails rather than advertising an
-    /// annotation the peer would reject:
+    /// Enforced by `generate_tools`, which returns an error so that no tool
+    /// advertises an annotation the peer would reject:
     ///
     /// - the command path and flag must exist;
     /// - the derived header must be a valid RFC 9110 token (alphanumerics and
@@ -626,7 +627,7 @@ impl Config {
     /// header name.
     ///
     /// Identical to [`Config::promote_flag`] except that the header suffix is
-    /// given rather than derived — for a flag name that is not a valid HTTP
+    /// given explicitly — for a flag name that is not a valid HTTP
     /// token, or when the header has to match a name an intermediary already
     /// routes on.
     ///
@@ -669,7 +670,7 @@ impl Config {
         self
     }
 
-    /// Set the MCP `Implementation` identity surfaced to MCP clients (server
+    /// Set the MCP `Implementation` identity reported to MCP clients (server
     /// name, version, optional title/description/URL/icons). Leave unset to
     /// fall through to `rmcp::model::Implementation::default()`, which
     /// derives from `CARGO_PKG_NAME` and `CARGO_PKG_VERSION` of the current
@@ -703,7 +704,7 @@ impl Config {
     /// Defaults to [`DescriptionMode::Long`], which preserves brontes'
     /// historical "prefer `long_about`, fall back to `about`" behavior.
     /// Flip to [`DescriptionMode::Short`] when verbose `long_about` text
-    /// dominates your tool surface and wastes the LLM's context budget.
+    /// dominates your tool descriptions and wastes the LLM's context budget.
     ///
     /// Per-command overrides via [`Config::description_mode_for`] and
     /// full-text overrides via [`Config::description`] both win over this
@@ -755,7 +756,7 @@ impl Config {
     /// optional); `text` is the literal
     /// description string sent to MCP clients.  When set, the stored text
     /// bypasses the `long_about`/`about`/`after_help` cascade entirely for
-    /// that command — useful for surfacing LLM-specific guidance (preconditions,
+    /// that command — useful for adding LLM-specific guidance (preconditions,
     /// "always pair with --dry-run", etc.) that doesn't belong in the CLI's
     /// human-facing `--help` output.
     ///
@@ -867,9 +868,9 @@ impl Config {
     /// Override [`TaskMode`] for a specific command path.
     ///
     /// The path is the space-separated command path (the CLI's own name is
-    /// optional), not the MCP tool name.  A path matching no walked command is
-    /// an [`crate::Error::Config`] from `generate_tools` rather than a
-    /// silently ignored entry.
+    /// optional). It is not the MCP tool name.  A path matching no command in
+    /// the tree is an [`crate::Error::Config`] from `generate_tools`; it is
+    /// never silently ignored.
     ///
     /// ```rust
     /// use brontes::{Config, TaskMode};
@@ -941,13 +942,13 @@ impl Config {
     /// `--group <NAME>`.
     ///
     /// Each entry covers its own subtree, so naming `"release"` also takes
-    /// `"release notes"` — the group tracks the command tree
-    /// rather than drifting from it as subcommands are added.  Calling this
+    /// `"release notes"` — the group follows the command tree
+    /// as subcommands are added.  Calling this
     /// twice with the same name appends to the existing group.
     ///
-    /// Paths that match no walked command are rejected by
+    /// Paths that match no command in the tree are rejected by
     /// [`crate::generate_tools`], so a renamed subcommand breaks the build
-    /// instead of silently shrinking the group.
+    /// and the group never shrinks silently.
     ///
     /// ```rust
     /// use brontes::Config;
@@ -995,7 +996,7 @@ impl Config {
     /// Expose only the named group, as `--group <NAME>` does.
     ///
     /// Combines with the other `expose_*` methods (union) and loses to every
-    /// `hide_*` method.  Pin one here to ship a CLI whose MCP server is
+    /// `hide_*` method.  Set one here to ship a CLI whose MCP server is
     /// trimmed by default; end users widen or narrow it from the launch flags.
     ///
     /// ```rust
@@ -1012,7 +1013,7 @@ impl Config {
         self
     }
 
-    /// Discard every exposure pinned so far and serve the whole tool list, as
+    /// Discard every exposure set so far and serve the whole tool list, as
     /// `--all` does.
     ///
     /// Every other `expose_*` method is additive, so a CLI that ships a

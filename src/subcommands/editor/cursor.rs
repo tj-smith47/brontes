@@ -1,4 +1,4 @@
-//! `mcp cursor {enable, disable, list}` clap surface and dispatch.
+//! `mcp cursor {enable, disable, list}` clap commands and dispatch.
 //!
 //! Mirrors ophis `internal/cfgmgr/cmd/cursor/{root,enable,disable,list}.go`
 //! with the following divergences:
@@ -27,12 +27,12 @@ use super::{arg_config_path, arg_env, arg_log_level, arg_server_name, merge_env}
 /// Build the `--workspace` clap argument used by all three Cursor leaves.
 ///
 /// Flag-only (no value). When present, the editor's config path resolves
-/// to `$CWD/.cursor/mcp.json` instead of the per-OS user-mode default.
-/// `--config-path` always wins over both.
+/// to `$CWD/.cursor/mcp.json`; when absent, it uses the per-OS user-mode
+/// default. `--config-path` always wins over both.
 fn arg_workspace() -> Arg {
     Arg::new("workspace")
         .long("workspace")
-        .help("Use the workspace config ($CWD/.cursor/mcp.json) instead of the user config")
+        .help("Use the workspace config ($CWD/.cursor/mcp.json); the user config is left unchanged")
         .action(ArgAction::SetTrue)
 }
 

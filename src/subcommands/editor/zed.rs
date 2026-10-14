@@ -1,4 +1,4 @@
-//! `mcp zed {enable, disable, list}` clap surface and dispatch.
+//! `mcp zed {enable, disable, list}` clap commands and dispatch.
 //!
 //! Mirrors the Cursor / `VSCode` shape verbatim with two structural
 //! differences:
@@ -28,12 +28,14 @@ use super::{arg_config_path, arg_env, arg_log_level, arg_server_name, merge_env}
 /// Build the `--workspace` clap argument used by all three Zed leaves.
 ///
 /// Flag-only (no value). When present, the config path resolves to
-/// `$CWD/.zed/settings.json` instead of the per-OS user-mode default.
-/// `--config-path` always wins over both.
+/// `$CWD/.zed/settings.json`; when absent, it uses the per-OS user-mode
+/// default. `--config-path` always wins over both.
 fn arg_workspace() -> Arg {
     Arg::new("workspace")
         .long("workspace")
-        .help("Use the workspace config ($CWD/.zed/settings.json) instead of the user config")
+        .help(
+            "Use the workspace config ($CWD/.zed/settings.json); the user config is left unchanged",
+        )
         .action(ArgAction::SetTrue)
 }
 

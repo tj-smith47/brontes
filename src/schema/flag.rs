@@ -1,6 +1,6 @@
 //! `clap::Arg` → JSON Schema property mapping.
 //!
-//! Walks a `clap::Command`'s argument list, applies local-before-inherited
+//! Iterates over a `clap::Command`'s argument list, applies local-before-inherited
 //! dedup, excludes hidden flags, and produces a `(properties, required)`
 //! pair ready to splice into the per-tool input schema.
 
@@ -39,7 +39,7 @@ pub struct FlagSpec {
     pub render: FlagRender,
 }
 
-/// The per-tool flag surface: the JSON Schema clients see, plus the execution
+/// The per-tool flag information: the JSON Schema clients see, plus the execution
 /// metadata brontes needs when a call arrives.
 #[derive(Debug, Default)]
 pub struct FlagsSchema {
@@ -60,7 +60,7 @@ fn render_kind(arg: &Arg) -> FlagRender {
     }
 }
 
-/// Walk `cmd`'s args (local first, inherited second; dedup by id) and
+/// Iterate over `cmd`'s args (local first, inherited second; dedup by id) and
 /// build a `(properties_map, required_list)` ready to splice into the
 /// tool's input schema.
 ///
@@ -113,8 +113,8 @@ pub fn build_flags_schema(
 /// Process a single [`Arg`], inserting into `properties` and `required`.
 ///
 /// Skips hidden args, clap's auto-injected `help` / `version` ids, and
-/// positional args (those have neither `long` nor `short` set, and surface
-/// through `properties.args` instead). Applies a wholesale `flag_schemas`
+/// positional args (those have neither `long` nor `short` set, and are
+/// reported through `properties.args`). Applies a wholesale `flag_schemas`
 /// override when present; otherwise auto-extracts type, description,
 /// defaults, and enum.
 fn process_arg(arg: &Arg, cfg: &Config, cmd_path: &str, out: &mut FlagsSchema) {
@@ -293,7 +293,7 @@ fn classify_array_item(arg: &Arg, cfg: &Config, cmd_path: &str) -> SchemaType {
 /// Look up the [`SchemaType`] from the arg's value parser type id, falling
 /// back to `String` with a debug log when the type is unrecognised.
 ///
-/// Walks [`known_type_classifications`] comparing each entry's [`TypeId`]
+/// Iterates over [`known_type_classifications`], comparing each entry's [`TypeId`]
 /// against the arg's `AnyValueId` via `PartialEq<TypeId>` — no macro
 /// needed, and no duplicate table to maintain.
 fn classify_by_type_id(arg: &Arg, cmd_path: &str) -> SchemaType {

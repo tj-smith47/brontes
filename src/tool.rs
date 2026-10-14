@@ -112,7 +112,7 @@ mod tests {
     fn test_tool_input_default() {
         let input = ToolInput::default();
         assert!(input.flags.is_empty());
-        assert!(input.args.is_empty());
+        assert_eq!(input.args, Vec::<String>::new());
     }
 
     #[test]
@@ -145,7 +145,7 @@ mod tests {
         // call that omits it is the worst of both.
         let flags_only: ToolInput =
             from_value(json!({"flags": {"verbose": true}})).expect("flags alone must deserialize");
-        assert!(flags_only.args.is_empty());
+        assert_eq!(flags_only.args, Vec::<String>::new());
         assert_eq!(flags_only.flags.get("verbose"), Some(&json!(true)));
 
         let args_only: ToolInput =

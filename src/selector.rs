@@ -142,7 +142,7 @@ pub struct MiddlewareCtx {
     /// Carries the progress token (`RequestMetaObject::get_progress_token`),
     /// the client's identity and capabilities under the `2026-07-28` stateless
     /// revision, and any extension keys the client set. [`MiddlewareCtx`]
-    /// surfaces the resolved forms of the fields brontes itself needs, but the
+    /// exposes the resolved forms of the fields brontes itself needs, but the
     /// raw map is here so a middleware is never blocked on brontes adding an
     /// accessor.
     pub meta: RequestMetaObject,
@@ -160,7 +160,7 @@ pub struct MiddlewareCtx {
     /// Check [`ClientCapabilities::elicitation`] before returning an
     /// [`InputRequest::Elicitation`](rmcp::model::InputRequest) — a client that
     /// never declared it cannot answer, and brontes turns the attempt into a
-    /// tool error rather than letting it reach the wire.
+    /// tool error so it never reaches the wire.
     pub client_capabilities: Option<ClientCapabilities>,
 
     /// The client's answers to a previous [`MiddlewareOutcome::InputRequired`],
@@ -199,7 +199,7 @@ pub struct MiddlewareCtx {
 /// populated. A middleware that has already run the exec step before asking
 /// for input will therefore run it again on the retry. That is legitimate for a
 /// read-only or dry-run command and wrong for a destructive one, so brontes
-/// leaves the choice with the middleware rather than guessing: branch on
+/// leaves the choice with the middleware and does not guess: branch on
 /// `ctx.input_responses.is_some()` to tell a retry from a first attempt.
 ///
 /// # Example: confirm before a destructive command
@@ -222,7 +222,7 @@ pub struct MiddlewareCtx {
 ///             return next(ctx).await;
 ///         }
 ///
-///         // A retry is a fresh call carrying the answers, not a resumption:
+///         // A retry is a fresh call carrying the answers; nothing resumes:
 ///         // ask on the first attempt, act only once an answer is in.
 ///         let Some(answers) = ctx.input_responses.as_ref() else {
 ///             let mut requests = InputRequests::new();

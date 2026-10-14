@@ -10,7 +10,7 @@
 //!   VSCode/Cursor add `type/url/headers`).
 //! - [`Manager<C>`] holds the resolved config path, the loaded (or
 //!   defaulted) config, and the `load` / `save` / `enable_server` /
-//!   `disable_server` / `print` surface.
+//!   `disable_server` / `print` methods.
 //!
 //! # Save semantics — backup before write
 //!
@@ -26,7 +26,7 @@
 //!
 //! JSON is written with 2-space indent (`serde_json::to_vec_pretty`). The
 //! `EditorConfig` impl is expected to back its server map with a
-//! [`std::collections::BTreeMap`] (or a structure that walks keys in
+//! [`std::collections::BTreeMap`] (or a structure that iterates keys in
 //! sorted order) so the on-disk bytes are stable across runs — important
 //! for the golden round-trip parity tests against ophis.
 
@@ -126,8 +126,8 @@ pub trait EditorConfig: serde::Serialize + serde::de::DeserializeOwned + Default
 
 /// Generic manager that load / mutates / saves an editor's MCP config.
 ///
-/// Construct via [`Manager::load`]; missing files yield a default config
-/// rather than an error so the first `mcp <editor> enable` invocation on
+/// Construct via [`Manager::load`]; a missing file yields a default config
+/// (no error), so the first `mcp <editor> enable` invocation on
 /// a fresh machine writes the initial config without ceremony.
 pub struct Manager<C: EditorConfig> {
     path: PathBuf,
@@ -137,7 +137,7 @@ pub struct Manager<C: EditorConfig> {
 impl<C: EditorConfig> Manager<C> {
     /// Read the editor config from `path`. A missing file yields
     /// [`C::default()`](Default::default); other I/O or JSON-parse failures
-    /// surface as [`Error::EditorConfigRead`] or [`Error::EditorConfigJson`].
+    /// are returned as [`Error::EditorConfigRead`] or [`Error::EditorConfigJson`].
     ///
     /// Emits `Using config path "<path>"` to stdout on every call (ophis
     /// `manager.go:114` parity).
@@ -249,10 +249,10 @@ impl<C: EditorConfig> Manager<C> {
 
     /// Print configured server names to stdout, one per line.
     ///
-    /// When the underlying file does not exist, surface the resolved path
+    /// When the underlying file does not exist, print the resolved path
     /// so the operator can see where brontes looked. When the config has
-    /// zero servers, print a friendly "no servers configured" note rather
-    /// than blank output.
+    /// zero servers, print a friendly "no servers configured" note so
+    /// the output is not blank.
     pub(crate) fn print(&self) {
         if !self.path.exists() {
             println!("(no servers configured at {})", self.path.display());

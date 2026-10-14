@@ -1,4 +1,4 @@
-//! `mcp claude {enable, disable, list}` clap surface and dispatch.
+//! `mcp claude {enable, disable, list}` clap commands and dispatch.
 //!
 //! Mirrors ophis `internal/cfgmgr/cmd/claude/{root,enable,disable,list}.go`
 //! with the following divergences:

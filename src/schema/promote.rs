@@ -6,7 +6,8 @@
 //! only from top-level properties and rejects it outright anywhere deeper, so a
 //! flag left nested under `flags` can never be promoted where it sits.
 //!
-//! The promotion is duplicative routing metadata, not a second data channel.
+//! The promotion is duplicative routing metadata; it does not add a second
+//! data channel.
 //! The value still travels in the request body; the header is a copy an
 //! intermediary can route on without parsing JSON, and the receiving server
 //! rejects the request if the two disagree.
@@ -41,7 +42,7 @@ pub struct Promotions {
 /// True for an RFC 9110 §5.6.2 token character.
 ///
 /// Header names outside this set cannot be sent at all, so a config that
-/// produces one is rejected rather than advertised.
+/// produces one is rejected before it can be advertised.
 const fn is_tchar(c: char) -> bool {
     c.is_ascii_alphanumeric()
         || matches!(

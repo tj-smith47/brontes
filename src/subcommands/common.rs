@@ -57,14 +57,14 @@ pub const SELECTION_FLAGS: [(&str, &str, &str, &str); 6] = [
     ),
 ];
 
-/// The clap id of the flag that discards a pinned exposure.
+/// The clap id of the flag that serves every tool, including those the CLI hides by default.
 pub const ALL_FLAG: &str = "all";
 
 /// Attach the tool-selection flags to an `mcp` leaf.
 ///
 /// The set is deliberately a 2×3 matrix — expose or hide, by group, command,
 /// or tool — so a user who learns one flag has learned all six, plus `--all`
-/// as the way back out of an exposure the CLI's author pinned.
+/// as the way back out of an exposure the CLI's author configured.
 pub fn with_selection_flags(mut cmd: Command) -> Command {
     for (id, long, value_name, help) in SELECTION_FLAGS {
         cmd = cmd.arg(
@@ -81,20 +81,20 @@ pub fn with_selection_flags(mut cmd: Command) -> Command {
             .action(ArgAction::SetTrue)
             .conflicts_with_all(["group", "command", "tool"])
             .help(
-                "Serve every tool, discarding any exposure this CLI pins by default. \
-                 Hiding still wins, so --hide-command and friends compose with it",
+                "Serve every tool, including the ones this CLI hides by default. \
+                 --hide-command and friends still hide theirs",
             ),
     )
 }
 
 /// Fold the tool-selection flags from `matches` onto `cfg`.
 ///
-/// The flags merge with whatever the CLI's author already pinned in
-/// [`Config::tool_filter`] rather than replacing it, so a developer who ships
+/// The flags merge with whatever the CLI's author already set in
+/// [`Config::tool_filter`] and keep the author's entries, so a developer who ships
 /// a hidden command keeps it hidden no matter what the launch line asks for.
 ///
 /// Both sides are resolved against `root` first. The merge decides which
-/// pinned entries a launch-line hide overrules, and `"release"` and
+/// author-set entries a launch-line hide overrules, and `"release"` and
 /// `"demo release"` have to be the same command by then for that comparison
 /// to mean anything.
 pub fn apply_selection_flags(cfg: Config, root: &str, matches: &ArgMatches) -> Config {
@@ -128,13 +128,13 @@ pub fn apply_selection_flags(cfg: Config, root: &str, matches: &ArgMatches) -> C
 ///
 /// Invalid values return `None` (i.e., fall through to `Config::log_level`
 /// or `RUST_LOG`); a `tracing::warn!` records the offending value so users
-/// notice the typo at startup rather than wondering why their level had
-/// no effect. This is a deliberate divergence from ophis's silent
+/// notice the typo at startup and do not have to wonder why their level
+/// had no effect. This is a deliberate divergence from ophis's silent
 /// fallback to `Info`.
 ///
 /// Shared between `mcp start` (stdio transport) and `mcp stream`
-/// (streamable-HTTP transport) so the two surfaces cannot drift in their
-/// `--log-level` parsing semantics. Each surface's `parse_log_level`
+/// (streamable-HTTP transport) so the two subcommands cannot drift in their
+/// `--log-level` parsing semantics. Each subcommand's `parse_log_level`
 /// wrapper exists to keep the call sites in their own module but
 /// delegates here without modification.
 pub fn parse_log_level(matches: &ArgMatches) -> Option<Level> {

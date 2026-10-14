@@ -1,5 +1,5 @@
 //! [`BrontesServer`]: the [`rmcp::ServerHandler`] implementation that turns
-//! a walked [`clap::Command`] tree into a running MCP server.
+//! a traversed [`clap::Command`] tree into a running MCP server.
 //!
 //! `BrontesServer` is the runtime counterpart to [`crate::generate_tools`].
 //! Where `generate_tools` builds a static [`Vec<Tool>`](rmcp::model::Tool)
@@ -43,7 +43,7 @@ use crate::selector::{BoxedNext, Middleware, MiddlewareCtx, MiddlewareOutcome, M
 use crate::tool::{ToolInput, ToolOutput};
 use crate::trace::TraceContext;
 
-/// MCP server handler that exposes a walked clap tree as MCP tools.
+/// MCP server handler that exposes a traversed clap tree as MCP tools.
 ///
 /// Construct via [`BrontesServer::new`] and feed to
 /// [`rmcp::ServiceExt::serve`] over a stdio (or future HTTP) transport.
@@ -54,12 +54,12 @@ use crate::trace::TraceContext;
 /// server construction, so the cache cannot go stale; a future
 /// hot-reload feature would need to invalidate it.
 ///
-/// Every field is shared rather than owned, so cloning a server is cheap and
+/// Every field is a shared handle, so cloning a server is cheap and
 /// every clone answers from the same tool cache and the same task store. The
 /// streamable-HTTP transport takes a handler factory and calls it per session;
 /// handing out clones keeps a task created by one request reachable from the
-/// `tasks/get` that follows it, and keeps the clap walk a startup cost rather
-/// than a per-request one.
+/// `tasks/get` that follows it, and makes the clap traversal a one-time startup
+/// cost that requests do not repeat.
 ///
 /// Marked `#[doc(hidden)]` because consumers are expected to drive the
 /// server through [`crate::handle`] / [`crate::run`]; the type is exposed
@@ -69,7 +69,7 @@ use crate::trace::TraceContext;
 #[derive(Clone)]
 pub struct BrontesServer {
     /// The user's full clap tree, cloned and `build()`-ed at construction
-    /// time so global args are propagated before walking.
+    /// time so global args are propagated before traversal.
     cli: Arc<Command>,
     /// User-facing configuration: selectors, annotations, default env, etc.
     cfg: Arc<Config>,
@@ -77,9 +77,9 @@ pub struct BrontesServer {
     /// computed once at construction. See type-level docs.
     tools: Arc<Vec<ResolvedTool>>,
     /// Store and executor for detached commands (SEP-2663). Present
-    /// unconditionally — it costs an empty map when no command is detached,
-    /// and the `tasks` capability, not this field, is what tells clients the
-    /// extension is live.
+    /// unconditionally — it costs an empty map when no command is detached.
+    /// Clients learn the extension is live from the `tasks` capability; the
+    /// presence of this field does not signal it.
     tasks: TaskManager,
 }
 
@@ -90,13 +90,13 @@ impl BrontesServer {
     /// calls see a stable shape (global args propagated, defaults resolved).
     ///
     /// Returns [`crate::Error::Config`] / [`crate::Error::Schema`] if the
-    /// pre-walk surfaces a bad config; this matches the existing
-    /// [`crate::server::stdio::serve_stdio`] pre-walk warning pass while
+    /// pre-traversal finds a bad config; this matches the existing
+    /// [`crate::server::stdio::serve_stdio`] pre-traversal warning pass while
     /// also seeding the per-server tool cache.
     ///
     /// # Errors
     ///
-    /// Any error surfaced by [`crate::generate_tools`] (bad config, bad
+    /// Any error returned by [`crate::generate_tools`] (bad config, bad
     /// schema).
     #[doc(hidden)]
     pub fn new(mut cli: Command, mut cfg: Config) -> Result<Self> {
@@ -405,8 +405,8 @@ impl CallPlan {
     /// Run the middleware chain once, with whatever the client has answered so
     /// far.
     ///
-    /// A panic anywhere in the chain becomes [`crate::Error::Panic`] rather
-    /// than unwinding: the chain always runs inside `tokio::spawn`, so the rmcp
+    /// A panic anywhere in the chain is caught and returned as
+    /// [`crate::Error::Panic`]: the chain always runs inside `tokio::spawn`, so the rmcp
     /// service task survives a middleware that panics.
     async fn run_once(
         &self,
@@ -467,8 +467,8 @@ const MAX_TASK_INPUT_ROUNDS: usize = 16;
 /// The middleware sees exactly what it sees in a blocking call — an input
 /// request ends its run, and the answer arrives on a fresh run through
 /// [`MiddlewareCtx::input_responses`] and [`MiddlewareCtx::request_state`].
-/// Only the transport differs: the questions leave via `tasks/get` instead of
-/// the `tools/call` response.
+/// Only the transport differs: the questions leave via `tasks/get`, and the
+/// `tools/call` response does not carry them.
 async fn run_detached(
     plan: CallPlan,
     task_ctx: TaskContext,
@@ -604,8 +604,8 @@ async fn detached_rounds(
 
 /// Turn what the middleware chain produced into the `tools/call` response.
 ///
-/// Every path answers with a result rather than a JSON-RPC error, including a
-/// middleware that asked for input the peer cannot supply: one misbehaving call
+/// Every path answers with a result, including a middleware that asked for input
+/// the peer cannot supply. No path returns a JSON-RPC error: one misbehaving call
 /// must not be able to fail the request at the protocol level.
 fn outcome_to_response(
     result: MiddlewareResult,
@@ -661,7 +661,8 @@ fn input_required_to_response(
 ///
 /// - Below protocol `2026-07-28` the result type does not exist. rmcp turns the
 ///   attempt into a JSON-RPC `-32600`, which would break brontes' invariant that
-///   a tool call always answers with a result rather than a protocol error.
+///   a tool call always answers with a result and no tool call ends in a
+///   protocol error.
 /// - An elicitation request needs a client that declared the elicitation
 ///   capability. rmcp enforces this for the Tasks extension only, so an
 ///   elicitation would otherwise be sent to a client with no way to answer it,
@@ -795,7 +796,7 @@ fn unknown_flags(input: &ToolInput, flag_specs: &BTreeMap<String, FlagSpec>) -> 
 /// with the request's W3C Trace Context when propagation is enabled.
 ///
 /// Per-request trace context wins over `default_env` on conflict. A statically
-/// pinned `TRACEPARENT` would fold every call into a single span, so treating
+/// configured `TRACEPARENT` would fold every call into a single span, so treating
 /// it as the weaker value is what keeps traces correct.
 fn resolve_call_env(cfg: &Config, trace_context: &TraceContext) -> HashMap<String, String> {
     let mut env = cfg.default_env.clone();
@@ -815,7 +816,7 @@ fn resolve_call_env(cfg: &Config, trace_context: &TraceContext) -> HashMap<Strin
 /// `command_path` is the space-joined clap path for the underlying subcommand
 /// (e.g. `"myapp greet"`). When non-empty it is appended to the human-readable
 /// body so operators can immediately see which CLI command failed without
-/// cross-referencing the tool name against the walked tree.
+/// cross-referencing the tool name against the command tree.
 fn tool_error_result(name: &str, command_path: &str, e: &crate::Error) -> CallToolResult {
     let base = format!("tool '{name}' failed to execute: {e}");
     let body = if command_path.is_empty() {

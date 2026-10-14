@@ -20,8 +20,8 @@
 //!   user's content keys still round-trip; only the comments on top of them
 //!   are sacrificed.
 //!
-//! - **`context_servers` is a top-level key**, not a nested `mcpServers`
-//!   (Claude / Cursor) or `servers` (`VSCode`).
+//! - **`context_servers` is the top-level key** that holds the servers;
+//!   Claude / Cursor use `mcpServers` and `VSCode` uses `servers`.
 //!
 //! The per-server field shape (Zed docs):
 //!
@@ -36,7 +36,7 @@
 //!
 //! Local servers carry `command` + optional `args` + optional `env`. Remote
 //! servers carry `url` + optional `headers`. brontes only ever writes the
-//! local-server shape (`mcp zed enable` mints a stdio child), but the
+//! local-server shape (`mcp zed enable` configures a stdio child), but the
 //! remote-server fields exist on [`ZedServer`] so a load-mutate-save round
 //! trip preserves them when a user has hand-edited a remote entry.
 
@@ -151,12 +151,12 @@ impl EditorConfig for ZedConfig {
 ///
 /// Trailing-comma handling: a `,` is dropped when the next non-whitespace
 /// byte is `]` or `}`. Comments inside the lookahead window are not
-/// supported (rare in practice); we conservatively keep the comma rather
-/// than risk skipping past a comment and misjudging the close.
+/// supported (rare in practice); the comma is kept, because skipping past a
+/// comment could misjudge the close.
 ///
 /// Idempotent on strict JSON: a strict-JSON input produces the same bytes
 /// out. The function does NOT validate JSON — invalid input returns
-/// invalid (but stripped) output; `serde_json` surfaces the parse error.
+/// invalid (but stripped) output; `serde_json` reports the parse error.
 fn strip_jsonc(bytes: &[u8]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i: usize = 0;

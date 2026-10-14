@@ -1,7 +1,7 @@
 //! `mcp stream` — streamable HTTP MCP server.
 //!
 //! Mirrors ophis `start.go::runStreamableHTTPServer` (`start.go:95-126`)
-//! and `config.go::serveStreamableHTTP`. The clap surface is `--host
+//! and `config.go::serveStreamableHTTP`. The clap flags are `--host
 //! <HOST>`, `--port <PORT>`, `--log-level <LEVEL>`; an empty `--host` is
 //! mapped to `0.0.0.0` (Go-parity bind-all) inside `run`.
 //!
@@ -20,9 +20,9 @@ use crate::config::Config;
 
 /// Build the `mcp stream` clap subcommand.
 ///
-/// Flag surface (`--host`, `--port`, `--log-level`) is stable per
+/// The flag set (`--host`, `--port`, `--log-level`) is stable per
 /// ophis-parity; the editor-config writer derives the JSON snippet for
-/// MCP clients from this surface.
+/// MCP clients from these flags.
 pub fn build() -> Command {
     super::common::with_selection_flags(build_without_selection())
 }
@@ -79,8 +79,8 @@ fn build_without_selection() -> Command {
 /// - [`crate::Error::Config`] when `--host`/`--port` produce an invalid
 ///   `SocketAddr` (this is rare since clap already validates `--port` as
 ///   `u16`; the host string parse is the remaining failure mode).
-/// - Any error surfaced by [`crate::server::http::serve_http`] (bind
-///   failure, schema/config error from the pre-walk, transport panic).
+/// - Any error returned by [`crate::server::http::serve_http`] (bind
+///   failure, schema/config error from the pre-traversal, transport panic).
 pub async fn run(matches: &ArgMatches, cli: Command, cfg: Option<Config>) -> Result<()> {
     // Production entry: mint a fresh cancel token, wire the signal
     // listener into it, then delegate to `run_with_cancel` for the
@@ -149,7 +149,7 @@ pub const fn resolve_bind_host(raw: &str) -> &str {
 /// Test-only proxy for [`parse_log_level`]. Exposed via
 /// [`crate::__test_internal::parse_stream_log_level`] so the warn-fire
 /// test crate can assert the unrecognized-`--log-level`
-/// `tracing::warn!` fires for the `mcp stream` surface independently
+/// `tracing::warn!` fires for the `mcp stream` subcommand independently
 /// of `mcp start`.
 pub fn parse_log_level_for_test(matches: &ArgMatches) -> Option<Level> {
     parse_log_level(matches)

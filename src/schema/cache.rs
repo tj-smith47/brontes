@@ -2,9 +2,9 @@
 //!
 //! Each static is initialised once on first read via [`std::sync::LazyLock`].
 //! Per-tool customisation should call [`fresh_tool_input_schema`] to obtain
-//! an independent clone to mutate, rather than touching the cached [`Arc`]
-//! directly.  The output schema is invariant per tool; consumers share the
-//! single cached [`Arc`] via [`crate::schema::build_output_schema`].
+//! an independent clone to mutate, leaving the cached [`Arc`] untouched.
+//! The output schema is invariant per tool; consumers share the single cached
+//! [`Arc`] via [`crate::schema::build_output_schema`].
 
 use std::sync::{Arc, LazyLock};
 
@@ -21,7 +21,7 @@ pub static TOOL_INPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
 ///
 /// The value is computed once and then shared.  Because the output shape is
 /// invariant per tool, [`crate::schema::build_output_schema`] shares this
-/// single [`Arc`] across every tool rather than cloning the map.
+/// single [`Arc`] across every tool; the map is never cloned.
 pub static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
     LazyLock::new(|| Arc::new(build_schema::<crate::tool::ToolOutput>()));
 
@@ -32,7 +32,7 @@ pub static TOOL_OUTPUT_BASE_SCHEMA: LazyLock<Arc<JsonObject>> =
 /// Panics (via `unreachable!`) if `schemars` produces a non-Object root for a
 /// `#[derive(JsonSchema)]` struct.  That cannot happen for any well-formed
 /// struct — the `JsonSchema` derive contract guarantees an Object root with
-/// `"properties"`.  If this ever fires it is a bug in schemars, not in brontes.
+/// `"properties"`.  If this ever fires it is a bug in schemars.
 fn build_schema<T: schemars::JsonSchema>() -> JsonObject {
     let schema = schemars::schema_for!(T);
     match schema.to_value() {
@@ -52,9 +52,10 @@ fn build_schema<T: schemars::JsonSchema>() -> JsonObject {
 /// into `title`.  Both are correct for a Rust reader and wrong on the wire: an
 /// MCP client shows the schema to a language model, so `"title": "ToolInput"`
 /// and a rustdoc block containing a Rust usage example spend the model's
-/// context budget describing brontes' internals instead of the wrapped
-/// command.  The rustdoc stays on docs.rs where it belongs; per-property
-/// descriptions, which do describe the command surface, are left intact.
+/// context budget describing brontes' internals, which tell the model nothing
+/// about the wrapped command.  The rustdoc stays on docs.rs where it belongs;
+/// per-property descriptions, which do describe the command's flags and
+/// arguments, are left intact.
 fn strip_rust_identity(schema: &mut JsonObject) {
     schema.remove("title");
     schema.remove("description");

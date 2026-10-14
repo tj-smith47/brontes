@@ -16,7 +16,7 @@
 //! and a Ctrl+C task on non-Unix. The two-step `spawn_signal_listener`
 //! → `spawn_signal_listener_with<S>` shape mirrors how
 //! [`crate::server::http::serve_http`] delegates to `serve_http_with`
-//! to expose its [`crate::server::http::Acceptor`] seam.
+//! to expose its [`crate::server::http::Acceptor`] injection point.
 
 #[cfg(unix)]
 use std::future::Future;
@@ -54,7 +54,7 @@ pub trait SignalSource: Send + 'static {
     /// # Errors
     ///
     /// Mirrors [`tokio::signal::unix::signal`]: registration is rare to
-    /// fail in practice but can surface when the runtime cannot allocate
+    /// fail in practice but can occur when the runtime cannot allocate
     /// the underlying I/O resource.
     fn register_sigint(&self) -> io::Result<Self::Signal>;
 

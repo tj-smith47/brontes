@@ -1,8 +1,8 @@
 //! brontes: transform clap CLIs into MCP servers.
 //!
-//! brontes walks a [`clap::Command`] tree, exposes every reachable command as an
+//! brontes traverses a [`clap::Command`] tree, exposes every reachable command as an
 //! [MCP](https://modelcontextprotocol.io) tool, and ships a complete MCP server
-//! runtime over stdio so the resulting agent surface plugs straight into Claude
+//! runtime over stdio so the resulting tools plug straight into Claude
 //! Desktop, Cursor, and `VSCode`.
 //!
 //! # Two-line quick start
@@ -40,7 +40,7 @@
 //!
 //! # Capabilities
 //!
-//! - [`generate_tools`] — walk a [`clap::Command`] tree into a
+//! - [`generate_tools`] — turn a [`clap::Command`] tree into a
 //!   [`Vec<rmcp::model::Tool>`](rmcp::model::Tool) for offline inspection,
 //!   editor-config generation, or hand-rolled server wiring.
 //! - [`command`], [`handle`], [`run`] — mount the `mcp` subtree and serve
@@ -116,7 +116,7 @@ pub use tool::{ToolInput, ToolOutput};
 pub use toolset::{Group, ToolFilter};
 pub use trace::TraceContext;
 
-/// The `rmcp` types that appear on brontes' own public surface.
+/// The `rmcp` types that appear in brontes' own public API.
 ///
 /// [`MiddlewareCtx`] hands a middleware the negotiated protocol version, the
 /// client's declared capabilities, the raw request `_meta`, and — on an MRTR
@@ -148,7 +148,7 @@ pub use rmcp::model::{
 #[cfg(feature = "request-state")]
 pub use rmcp::model::{RequestStateCodec, SealOptions};
 
-/// Internal-test access point: not a stable surface, do not use from
+/// Internal-test access point with no stability guarantee; do not use from
 /// downstream crates. Re-exported only so the integration-test crate can
 /// drive [`server::BrontesServer`] over an in-memory duplex transport,
 /// [`server::http::serve_http`] against an ephemeral local port, or the
@@ -188,15 +188,15 @@ pub mod __test_internal {
     pub use crate::schema::FlagRender;
 
     /// Render the argv for a tool call the way `mcp start` / `mcp stream` do,
-    /// deriving the per-flag render kinds from a real walk of `root`.
+    /// deriving the per-flag render kinds from a real traversal of `root`.
     ///
     /// [`render_flag_argv`] proves the renderer behaves once told how to render;
-    /// this proves the walk tells it correctly — the `clap::ArgAction` →
+    /// this proves the traversal tells it correctly — the `clap::ArgAction` →
     /// [`FlagRender`] → argv chain end to end, short only of the spawn.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::Config`] when the walk rejects `cfg`, or when
+    /// Returns [`crate::Error::Config`] when the traversal rejects `cfg`, or when
     /// `tool_name` is not in the generated tool list.
     pub fn render_tool_argv(
         root: &clap::Command,
@@ -277,7 +277,7 @@ pub mod __test_internal {
     }
 
     /// Drive the `mcp stream` `--log-level` parser. Same shape as
-    /// [`parse_start_log_level`]; both surfaces carry the same warn so
+    /// [`parse_start_log_level`]; both subcommands carry the same warn so
     /// the test suite exercises each independently.
     #[must_use]
     pub fn parse_stream_log_level(matches: &clap::ArgMatches) -> Option<tracing::Level> {
@@ -291,7 +291,7 @@ pub mod __test_internal {
     }
 
     /// Build the `mcp tools` subcommand, so the test crate can compare the
-    /// three leaves' flag surfaces against each other.
+    /// three leaves' flag sets against each other.
     #[must_use]
     pub fn tools_subcommand() -> clap::Command {
         crate::subcommands::tools::build()
@@ -318,7 +318,7 @@ pub mod __test_internal {
     /// caller-supplied cancellation token.
     ///
     /// Production code uses `stream::run`, which spawns its own signal
-    /// listener and mints a fresh token; the integration test crate
+    /// listener and creates a fresh token; the integration test crate
     /// passes a pre-cancelled token so `serve_http` returns immediately
     /// after bind, without firing real SIGINT at the test process.
     /// Covers the argv-parsing + `SocketAddr` build + serve-http call

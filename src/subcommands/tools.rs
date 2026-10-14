@@ -64,7 +64,7 @@ pub fn build() -> Command {
 ///
 /// # Errors
 ///
-/// - [`crate::Error::Config`] / [`crate::Error::Schema`] surfaced through
+/// - [`crate::Error::Config`] / [`crate::Error::Schema`] returned by
 ///   `generate_tools` for invalid configuration.
 /// - [`crate::Error::Io`] if the output file cannot be written.
 pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<()> {
@@ -93,15 +93,16 @@ pub fn run(matches: &ArgMatches, cli: &Command, cfg: Option<Config>) -> Result<(
 
 /// Print the groups this CLI defines, with how many tools each one carries.
 ///
-/// The count is resolved against the walked tree rather than against the
-/// group's member list, so a group naming a parent command reports the number
-/// of tools an end user would actually get from `--group <NAME>`.
+/// The count is resolved against the traversed command tree; the group's raw
+/// member list is not counted directly. A group naming a parent command
+/// reports the number of tools an end user would actually get from
+/// `--group <NAME>`.
 ///
 /// # Errors
 ///
-/// Same conditions as [`crate::generate_tools`] — the walk still runs, because
-/// a group whose members no longer exist should be reported as the
-/// configuration error it is rather than listed with a count of zero.
+/// Same conditions as [`crate::generate_tools`] — the traversal still runs,
+/// because a group whose members no longer exist is a configuration error and
+/// should be reported as one. Listing it with a count of zero would hide that.
 fn list_groups(cli: &Command, cfg: &Config) -> Result<()> {
     // Counted against the untrimmed list. `--groups` answers "what does this
     // CLI define", which does not change because one server was started with

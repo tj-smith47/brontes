@@ -48,7 +48,7 @@ use crate::config::Config;
 use crate::schema::FlagSpec;
 use crate::selector::{FlagMatcher, Middleware};
 
-/// A walked-and-filtered command paired with the runtime data the MCP server
+/// A traversed-and-filtered command paired with the runtime data the MCP server
 /// needs to dispatch a tool call: the MCP [`Tool`] descriptor, the optional
 /// [`Middleware`] claimed by the matching selector, and the space-joined clap
 /// path (handy for diagnostic messages even though [`crate::exec::run_tool`]
@@ -80,18 +80,18 @@ pub struct ResolvedTool {
     /// Flags this tool promotes to top-level input-schema properties carrying
     /// SEP-2243's `x-mcp-header` (see [`Config::promote_flag`]).
     ///
-    /// A promoted flag arrives beside `flags` rather than inside it, so
+    /// A promoted flag arrives as a sibling of `flags`, outside that object, so
     /// `call_tool` folds these names back in before deserializing — the CLI is
     /// invoked identically whether or not a flag was promoted.
     pub promoted_flags: BTreeSet<String>,
 }
 
-/// Walk `root`, apply safety filters, apply first-match-wins selectors,
+/// Traverse `root`, apply safety filters, apply first-match-wins selectors,
 /// and produce the MCP tool list ready to register with a server.
 ///
 /// Returns <code>Err([crate::Error::Config])</code> if any of these path-keyed
 /// [`Config`] entries names a command path that does not appear in the
-/// walked tree (after safety filtering):
+/// traversed tree (after safety filtering):
 ///
 /// - [`Config::annotations`] keys
 /// - [`Config::deprecated_commands`] entries
@@ -122,7 +122,7 @@ pub struct ResolvedTool {
 /// # Errors
 ///
 /// Returns [`crate::Error::Config`] if any path-keyed [`Config`] entry
-/// references a command path or flag name that does not exist in the walked
+/// references a command path or flag name that does not exist in the traversed
 /// tree, if a [`Config::descriptions`] entry holds empty/whitespace-only
 /// text, or if an introspectable selector factory captured an unknown path.
 pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
@@ -132,7 +132,7 @@ pub fn generate_tools(root: &Command, cfg: &Config) -> Result<Vec<Tool>> {
         .collect())
 }
 
-/// Same walk + selector pass as [`generate_tools`], but retains each tool's
+/// Same traversal + selector pass as [`generate_tools`], but retains each tool's
 /// claimed [`Middleware`] (if any) and the clap command path alongside the
 /// MCP [`Tool`] descriptor.
 ///
@@ -246,10 +246,10 @@ pub fn generate_tools_with_middleware(root: &Command, cfg: &Config) -> Result<Ve
 /// Fail when two commands generate the same MCP tool name.
 ///
 /// Path separators become underscores, so a flat `by_cell` and a nested
-/// `by cell` land on the same name. A duplicate is unserviceable in three
+/// `by cell` produce the same name. A duplicate is unserviceable in three
 /// ways at once: `tools/list` advertises one name twice, dispatch resolves
 /// every call to whichever came first, and `--tool` / `--hide-tool` hit both
-/// at once. Renaming one automatically would change the served surface
+/// at once. Renaming one automatically would change the served tool names
 /// without saying so, so this is an error the CLI's author resolves.
 ///
 /// # Errors
@@ -279,7 +279,7 @@ fn reject_duplicate_tool_names(tools: &[ResolvedTool]) -> Result<()> {
 /// # Errors
 ///
 /// [`crate::Error::Config`] when the filter names a tool the CLI does not
-/// have, when any single selection lands on no tool, or when the whole filter
+/// have, when any single selection matches no tool, or when the whole filter
 /// leaves nothing. Each would otherwise produce a server quietly missing
 /// something the caller asked for — a failure a client cannot distinguish
 /// from a CLI that simply has no such command.
@@ -330,7 +330,7 @@ fn apply_tool_filter(tools: &mut Vec<ResolvedTool>, cfg: &Config) -> Result<()> 
             if cfg.tool_filter.hidden_groups.contains(name) {
                 return Err(crate::Error::Config(format!(
                     "group {name:?} is both exposed and hidden. Hiding what a \
-                     CLI exposes by default needs somewhere to land: add the \
+                     CLI exposes by default leaves nothing to serve: add the \
                      selection you want (--group / --command / --tool), or use \
                      --all to drop the default and serve everything else"
                 )));
@@ -419,7 +419,7 @@ fn build_tool_name(path: &str, prefix: &str) -> String {
 /// sees only the resolved form, so the two spellings cannot behave
 /// differently.
 ///
-/// [`Selector`](crate::Selector) predicates are the one surface this cannot
+/// [`Selector`](crate::Selector) predicates are the one input this cannot
 /// reach: they are closures the caller writes against the path string, and a
 /// closure has nothing to rewrite. They receive the resolved path.
 ///
@@ -479,9 +479,9 @@ where
 ///
 /// A space is the path separator everywhere brontes addresses a command —
 /// `Config` keys, `--command`, group members, the segment split in
-/// `should_filter`, and the underscore substitution that mints tool names. A
+/// `should_filter`, and the underscore substitution that creates tool names. A
 /// name containing one is unaddressable and silently absorbs its neighbours,
-/// so it is refused rather than mangled.
+/// so it is refused; brontes does not try to rewrite it.
 ///
 /// # Errors
 ///
@@ -632,12 +632,12 @@ fn validate_paths(resolved: &[crate::walk::ResolvedCmd<'_>], cfg: &Config) -> Re
 }
 
 /// Check that every group member and every path the tool filter names is
-/// itself a walked command.
+/// itself a command in the traversed tree.
 ///
-/// The check is exact membership, not subtree coverage. A parent command is
-/// its own entry in the walk, so naming one still passes; matching by prefix
-/// instead would let a path the CLI does not have (`"my"` against a CLI whose
-/// root is `"my-tool"`) silently select that whole subtree.
+/// The check is exact membership; subtree coverage is not enough. A parent
+/// command is its own entry in the traversal, so naming one still passes;
+/// matching by prefix would let a path the CLI does not have (`"my"` against
+/// a CLI whose root is `"my-tool"`) silently select that whole subtree.
 ///
 /// # Errors
 ///
@@ -731,7 +731,7 @@ const DEFAULT_COMMAND_NAME: &str = "mcp";
 /// Validation — empty group name, sibling collision with a user-defined
 /// subcommand, missing `mcp` mount — happens at [`handle`] time, when
 /// the assembled parent CLI tree is in scope and a clean
-/// [`crate::Error::Config`] can surface at dispatch.
+/// [`crate::Error::Config`] can be returned at dispatch.
 ///
 /// An empty `cfg.command_name` defaults back to `"mcp"`; an explicit empty
 /// string never reaches `clap::Command::new` from this constructor.
@@ -763,13 +763,13 @@ pub fn command(cfg: Option<&Config>) -> Command {
 /// `get_matches(self)` consumes the original). `cfg` is the optional
 /// brontes configuration.
 ///
-/// Validates that the configured group name is in fact the brontes-minted
+/// Validates that the configured group name is in fact the brontes-created
 /// subtree (sibling collision detection) before invoking the matched leaf.
 ///
 /// # Errors
 ///
 /// - [`crate::Error::Config`] when the configured `command_name` resolves to
-///   a sibling subcommand that brontes did not mint (e.g., the user
+///   a sibling subcommand that brontes did not create (e.g., the user
 ///   pre-registered a `mcp` subcommand with the same name and forgot to
 ///   rename ours via [`Config::command_name`]).
 /// - Any error returned by the dispatched leaf (`start`, `tools`, or
@@ -805,7 +805,7 @@ pub async fn handle(matches: &clap::ArgMatches, cli: &Command, cfg: Option<&Conf
         .any(|s| s.get_name() == crate::subcommands::MARKER_NAME);
     if !has_marker {
         return Err(crate::Error::Config(format!(
-            "subcommand {group_name:?} on the CLI was not minted by brontes \
+            "subcommand {group_name:?} on the CLI was not created by brontes \
              (sibling collision); rename via Config::command_name"
         )));
     }
@@ -877,8 +877,8 @@ pub async fn run(cli: Command, cfg: Option<&Config>) -> Result<()> {
     run_from(cli, cfg, argv).await
 }
 
-/// Same as [`run`] but reads argv from an explicit iterator instead of
-/// the process environment.
+/// Same as [`run`] but reads argv from an explicit iterator; it does not
+/// read the process environment.
 ///
 /// Production code uses [`run`] (which reads `std::env::args_os()`); the
 /// integration test crate uses this to drive `run`'s argv-parsing /

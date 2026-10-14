@@ -16,10 +16,10 @@
 //!
 //! Every value here originates with the MCP client, so each is validated
 //! against the W3C wire format before it reaches the child's environment.  A
-//! value that fails validation is dropped with a `tracing::warn!` rather than
+//! value that fails validation is dropped with a `tracing::warn!` and is not
 //! forwarded: W3C requires a receiver that reads a malformed `traceparent` to
 //! restart the trace, and forwarding a malformed one would corrupt the
-//! consumer's trace silently instead of loudly.
+//! consumer's trace with no visible error.
 
 use rmcp::model::RequestMetaObject;
 
@@ -173,7 +173,7 @@ impl TraceContext {
 /// Enforces the version-`00` field widths, lowercase hex, the reserved-`ff`
 /// version, and the all-zero trace-id / parent-id prohibitions.  Versions
 /// above `00` may carry additional dash-separated fields, which the spec
-/// requires a `00` implementation to tolerate rather than reject.
+/// requires a `00` implementation to tolerate.
 fn is_valid_traceparent(raw: &str) -> bool {
     let mut parts = raw.split('-');
     let (Some(version), Some(trace_id), Some(span_id), Some(flags)) =
@@ -216,7 +216,7 @@ fn is_lower_hex(s: &str) -> bool {
 ///
 /// Rejecting control bytes matters beyond format correctness: these values
 /// reach a child process's environment, and a newline or NUL there is a
-/// smuggling primitive rather than a trace.
+/// smuggling primitive.
 fn is_valid_list_member_value(raw: &str, max_len: usize) -> bool {
     !raw.is_empty()
         && raw.len() <= max_len

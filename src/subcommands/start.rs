@@ -1,6 +1,6 @@
 //! `mcp start` — boot the MCP server over stdio.
 //!
-//! Mirrors ophis `start.go`. The flag surface is exactly `--log-level
+//! Mirrors ophis `start.go`. The only flag is `--log-level
 //! <LEVEL>` and inherits the group's help layout.
 
 use clap::{Arg, ArgMatches, Command};

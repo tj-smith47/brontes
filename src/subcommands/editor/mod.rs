@@ -2,7 +2,7 @@
 //!
 //! The Claude / Cursor / `VSCode` editor subtrees share five concerns:
 //!
-//! - Flag surface — `--config-path`, `--server-name`, `--env`,
+//! - Flags — `--config-path`, `--server-name`, `--env`,
 //!   `--log-level` (enable only), and a per-editor `--workspace`
 //!   (Cursor / `VSCode` only). Helpers here build the clap [`Arg`]s for the
 //!   subset every editor uses.
